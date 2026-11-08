@@ -14,7 +14,7 @@ struct EarshotApp: App {
         .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsView(settings: model.settings, speech: model.speech)
+            SettingsView(settings: model.settings, speech: model.speech, updater: model.updater)
         }
     }
 }

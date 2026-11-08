@@ -1,0 +1,10 @@
+{
+  "name": "earshot",
+  "version": "0.0.0-dev",
+  "private": true,
+  "description": "Release tooling only; the app is Swift",
+  "devDependencies": {
+    "semantic-release": "^24.2.0",
+    "@semantic-release/exec": "^7.0.3"
+  }
+}
