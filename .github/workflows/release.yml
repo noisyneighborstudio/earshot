@@ -14,7 +14,8 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-26
+    # Public repo: fork PRs must never run on our machines, so they go to GitHub-hosted macOS.
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'macos-26' || fromJSON('["self-hosted","macOS","earshot"]') }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -27,7 +28,7 @@ jobs:
       - name: Test
         run: |
           set -euo pipefail
-          brew install xcodegen
+          command -v xcodegen >/dev/null || brew install xcodegen
           xcodegen generate --quiet
           # GitHub release downloads (Sparkle's binary) intermittently answer 504; retry only that.
           for attempt in 1 2 3 4 5 6; do
@@ -59,7 +60,8 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
           security import "$cert" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$keychain" >/dev/null
-          security list-keychains -d user -s "$keychain"
+          # Add to (don't replace) the search list: the runner machine's other keychains stay usable.
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
       - name: Release
         if: github.event_name == 'push'
         env:
@@ -82,4 +84,6 @@ jobs:
         if: always() && github.event_name == 'push'
         run: |
           rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary.p8"
-          security delete-keychain "$RUNNER_TEMP/earshot.keychain-db" 2>/dev/null || true
+          keychain="$RUNNER_TEMP/earshot.keychain-db"
+          security list-keychains -d user -s $(security list-keychains -d user | tr -d '"' | grep -vF "$keychain")
+          [ ! -e "$keychain" ] || security delete-keychain "$keychain"
