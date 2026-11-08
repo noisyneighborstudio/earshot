@@ -34,7 +34,7 @@ Earshot ships a read-only MCP server, `earshot-mcp`, inside the app. Agents (Cla
 | Codex | `codex mcp add earshot -- "/Applications/NN Earshot.app/Contents/MacOS/earshot-mcp"` |
 | Cursor | Settings › Connect to Agents › Install (opens Cursor's install link), or add the JSON below to `~/.cursor/mcp.json` |
 | VS Code | Settings › Connect to Agents › Install (opens `vscode:mcp/install`), or run **MCP: Add Server…** with the command above |
-| Claude Desktop | Add the JSON below to `~/Library/Application Support/Claude/claude_desktop_config.json`, then restart Claude |
+| Claude Desktop | Settings › Connect to Agents › Install: Earshot builds `NN Earshot.mcpb` and opens it in Claude Desktop, which asks you to confirm. (Custom connectors take remote URLs only.) Or add the JSON below to `claude_desktop_config.json` and restart Claude |
 
 ```json
 {

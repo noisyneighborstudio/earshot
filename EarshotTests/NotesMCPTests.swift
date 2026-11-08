@@ -396,3 +396,44 @@ struct NotesMCPEndToEndTests {
         #expect(messages.count == 1)
     }
 }
+
+struct ClaudeDesktopExtensionTests {
+    @Test func manifestHasRequiredFieldsAndLaunchesBundledLauncher() throws {
+        let object = try #require(JSONSerialization.jsonObject(with: Data(AgentSetup.mcpbManifest(version: "1.2.3").utf8)) as? [String: Any])
+        #expect(object["manifest_version"] as? String == "0.3")
+        #expect(object["name"] as? String == "earshot")
+        #expect(object["version"] as? String == "1.2.3")
+        #expect((object["author"] as? [String: Any])?["name"] as? String == "Noisy Neighbor")
+        let server = try #require(object["server"] as? [String: Any])
+        #expect(server["type"] as? String == "binary")
+        #expect(server["entry_point"] as? String == "server/earshot")
+        #expect((server["mcp_config"] as? [String: Any])?["command"] as? String == "${__dirname}/server/earshot")
+    }
+
+    @Test func launcherExecsHelperWithArgumentsEvenWithQuotesInPath() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "earshot's mcpb \(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let helper = dir.appending(path: "earshot-mcp")
+        try Data("#!/bin/sh\necho \"ran $1\"\n".utf8).write(to: helper)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+        let launcher = dir.appending(path: "launcher")
+        try Data(AgentSetup.mcpbLauncher(helper).utf8).write(to: launcher)
+
+        let process = Process()
+        process.executableURL = URL(filePath: "/bin/sh")
+        process.arguments = [launcher.path, "hello world"]
+        let out = Pipe()
+        process.standardOutput = out
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+        #expect(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == "ran hello world\n")
+    }
+
+    @Test func installedStatusFromClaudeDesktopRecords() {
+        #expect(AgentSetup.mcpbStatus(installations: Data(#"{"extensions":{"local.mcpb.noisy-neighbor.earshot":{}}}"#.utf8)) == .connected)
+        #expect(AgentSetup.mcpbStatus(installations: Data(#"{"extensions":{}}"#.utf8)) == .notConnected)
+        #expect(AgentSetup.mcpbStatus(installations: Data(#"{"extensions":{"local.mcpb.x.earshotter":{}}}"#.utf8)) == .notConnected)
+    }
+}

@@ -30,7 +30,7 @@ struct AgentsSection: View {
         } header: {
             Text("Connect to Agents")
         } footer: {
-            Text("Agents like Claude Code can search your meeting notes, transcripts, action items, and dictations. Read-only, on this Mac. Claude Desktop: paste the copied config into \(AgentSetup.claudeDesktopConfig.path) and restart it.")
+            Text("Agents like Claude Code can search your meeting notes, transcripts, action items, and dictations. Read-only, on this Mac. Claude Desktop installs Earshot as an extension; confirm it there.")
         }
         .task { await connections.refresh() }
     }
@@ -44,7 +44,7 @@ struct AgentsSection: View {
                     Button("Remove") { Task { await connections.remove(agent) } }
                 }
                 if status != .missing {
-                    Button(agent == .claudeDesktop ? "Copy Config" : status == .notConnected ? "Install" : "Reinstall") {
+                    Button(status == .notConnected ? "Install" : "Reinstall") {
                         Task { await connections.install(agent) }
                     }
                 }
