@@ -1,0 +1,23 @@
+{
+  "author": {
+    "name": "Noisy Neighbor",
+    "url": "https://noisyneighbor.studio"
+  },
+  "compatibility": {
+    "platforms": ["darwin"]
+  },
+  "description": "Search your Earshot meeting notes, transcripts, action items, and dictations. Read-only, on this Mac.",
+  "display_name": "NN Earshot",
+  "icon": "icon.png",
+  "manifest_version": "0.3",
+  "name": "earshot",
+  "server": {
+    "entry_point": "server/earshot",
+    "mcp_config": {
+      "args": [],
+      "command": "${__dirname}/server/earshot"
+    },
+    "type": "binary"
+  },
+  "version": "0.0.0"
+}

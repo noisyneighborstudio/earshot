@@ -51,30 +51,6 @@ enum AgentSetup {
     /// The launch command, quoted for a shell.
     static func command(_ helper: URL) -> String { "\"\(helper.path)\"" }
 
-    /// Claude Desktop extension manifest (github.com/modelcontextprotocol/mcpb, MANIFEST.md).
-    static func mcpbManifest(version: String) -> String {
-        json([
-            "manifest_version": "0.3",
-            "name": serverName,
-            "display_name": "NN Earshot",
-            "version": version,
-            "description": "Search your Earshot meeting notes, transcripts, action items, and dictations. Read-only, on this Mac.",
-            "author": ["name": "Noisy Neighbor", "url": "https://noisyneighbor.studio"],
-            "icon": "icon.png",
-            "server": [
-                "type": "binary",
-                "entry_point": "server/earshot",
-                "mcp_config": ["command": "${__dirname}/server/earshot", "args": [String]()],
-            ],
-            "compatibility": ["platforms": ["darwin"]],
-        ], pretty: true)
-    }
-
-    /// The extension's server: execs the app's helper, so Sparkle updates reach Claude Desktop too.
-    static func mcpbLauncher(_ helper: URL) -> String {
-        "#!/bin/sh\nexec '\(helper.path.replacingOccurrences(of: "'", with: "'\\''"))' \"$@\"\n"
-    }
-
     /// Claude Desktop records installed extensions here, keyed by an id ending in the manifest name.
     static func mcpbStatus(installations: Data) -> Status {
         let object = try? JSONSerialization.jsonObject(with: installations) as? [String: Any]
@@ -162,7 +138,11 @@ final class AgentConnections {
             case .vsCode:
                 try self.open(AgentSetup.vsCodeURL(self.helper), agent)
             case .claudeDesktop:
-                try self.open(try await self.writeExtension(), agent)
+                // Built by scripts/build-mcpb.sh; Claude Desktop asks the user to confirm.
+                guard let bundle = Bundle.main.url(forResource: "NN Earshot", withExtension: "mcpb") else {
+                    throw AgentError(String(localized: "This copy of Earshot is missing its Claude Desktop extension."))
+                }
+                try self.open(bundle, agent)
             }
         }
     }
@@ -245,29 +225,6 @@ final class AgentConnections {
         let environment = cli.lastPathComponent == "codex" ? try await codexEnvironment() : nil
         let output = try await Subprocess.run(cli, arguments, environment: environment, directory: .homeDirectory, timeout: .seconds(60))
         guard output.status == 0 else { throw AgentError(output.message) }
-    }
-
-    /// Builds Earshot.mcpb (a zip with manifest.json at its root) for Claude Desktop to install.
-    private func writeExtension() async throws -> URL {
-        let fm = FileManager.default
-        let root = fm.temporaryDirectory.appending(path: "earshot-mcpb-\(UUID().uuidString)")
-        let staging = root.appending(path: "bundle")
-        try fm.createDirectory(at: staging.appending(path: "server"), withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: staging) }
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
-        try Data(AgentSetup.mcpbManifest(version: version).utf8).write(to: staging.appending(path: "manifest.json"))
-        let launcher = staging.appending(path: "server/earshot")
-        try Data(AgentSetup.mcpbLauncher(helper).utf8).write(to: launcher)
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcher.path)
-        guard let tiff = NSApp.applicationIconImage.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
-        else { throw AgentError(String(localized: "Couldn't render Earshot's icon for the extension.")) }
-        try png.write(to: staging.appending(path: "icon.png"))
-        let bundle = root.appending(path: "NN Earshot.mcpb")
-        let zip = try await Subprocess.run(
-            URL(filePath: "/usr/bin/ditto"), ["-c", "-k", "--norsrc", staging.path, bundle.path], timeout: .seconds(30))
-        guard zip.status == 0 else { throw AgentError(zip.message) }
-        return bundle
     }
 
     private func open(_ url: URL, _ agent: Agent) throws {

@@ -60,6 +60,12 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
           security import "$cert" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$keychain" >/dev/null
+          # PEM copies for signing the Claude Desktop extension (scripts/build-mcpb.sh).
+          /usr/bin/openssl pkcs12 -in "$cert" -passin env:CERTIFICATE_PASSWORD -nokeys -clcerts 2>/dev/null \
+            | /usr/bin/openssl x509 -out "$RUNNER_TEMP/developer-id.pem"
+          /usr/bin/openssl pkcs12 -in "$cert" -passin env:CERTIFICATE_PASSWORD -nocerts -nodes 2>/dev/null \
+            | /usr/bin/openssl pkey -out "$RUNNER_TEMP/developer-id-key.pem"
+          { echo "MCPB_SIGN_CERT=$RUNNER_TEMP/developer-id.pem"; echo "MCPB_SIGN_KEY=$RUNNER_TEMP/developer-id-key.pem"; } >> "$GITHUB_ENV"
           # Add to (don't replace) the search list: the runner machine's other keychains stay usable.
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
       - name: Release
@@ -86,7 +92,7 @@ jobs:
       - name: Remove temporary credentials
         if: always() && github.event_name == 'push'
         run: |
-          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary.p8"
+          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/developer-id.pem" "$RUNNER_TEMP/developer-id-key.pem" "$RUNNER_TEMP/notary.p8"
           keychain="$RUNNER_TEMP/earshot.keychain-db"
           security list-keychains -d user -s $(security list-keychains -d user | tr -d '"' | grep -vF "$keychain")
           [ ! -e "$keychain" ] || security delete-keychain "$keychain"
