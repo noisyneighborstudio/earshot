@@ -4,6 +4,7 @@
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
     ["@semantic-release/exec", {
+      "verifyConditionsCmd": "npx --no-install wrangler r2 bucket info earshot-releases",
       "prepareCmd": "./scripts/release-prepare.sh ${nextRelease.version}"
     }],
     ["@semantic-release/github", {

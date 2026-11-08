@@ -5,6 +5,7 @@ import SwiftUI
 struct MenuView: View {
     let model: AppModel
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.dismiss) private var dismiss
 
     private var settings: AppSettings { model.settings }
     private var permissions: Permissions { model.permissions }
@@ -78,6 +79,8 @@ struct MenuView: View {
                 FooterIcon(title: "Open Earshot", systemImage: "macwindow") { model.mainWindow.show(section: .home) }
                 FooterIcon(title: "Meetings", systemImage: "person.2.wave.2") { model.mainWindow.show(section: .meetings) }
                 FooterIcon(title: "Settings", systemImage: "gearshape") {
+                    // Close the tray first: it floats above normal windows and would cover Settings.
+                    dismiss()
                     NSApp.activate()
                     openSettings()
                 }
