@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+<channel><title>NN Earshot Updates</title><item>
+<title>NN Earshot 0.1.0</title><pubDate>Sun, 08 Nov 2026 10:29:02 +0000</pubDate>
+<link>https://github.com/noisyneighborstudio/earshot/releases/tag/v0.1.0</link>
+<sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+<enclosure url="https://github.com/noisyneighborstudio/earshot/releases/download/v0.1.0/NN-Earshot-0.1.0.zip" sparkle:version="4" sparkle:shortVersionString="0.1.0" length="4231967" type="application/octet-stream" sparkle:edSignature="4MnGfiNrpeRoKFOeU1sT8E3ccpEtrLTMbLhxZhAam/4MO9MH8iA27gJQQ9stmjm+39mu984LRfZN47CEI//MBw=="/>
+</item></channel></rss>
