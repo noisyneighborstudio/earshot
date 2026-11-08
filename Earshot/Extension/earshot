@@ -1,0 +1,8 @@
+#!/bin/sh
+# Claude Desktop extension server. Runs the helper inside the installed app, so the bundle carries no
+# path (CI signs it) and Sparkle updates reach Claude Desktop too.
+for app in "$HOME/Applications/NN Earshot.app" "/Applications/NN Earshot.app"; do
+    [ -x "$app/Contents/MacOS/earshot-mcp" ] && exec "$app/Contents/MacOS/earshot-mcp" "$@"
+done
+echo "earshot: NN Earshot.app is not in ~/Applications or /Applications" >&2
+exit 1

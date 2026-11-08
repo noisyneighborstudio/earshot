@@ -10,7 +10,9 @@ xcodegen generate
 open Earshot.xcodeproj   # or: xcodebuild -scheme Earshot -derivedDataPath build build
 ```
 
-First launch: grant Microphone, Accessibility and Input Monitoring from the menu, The on-device speech model downloads automatically. Meeting notes and titles use the Claude Code CLI (`claude`) with your existing login; no API key.
+First launch: grant Microphone, Accessibility and Input Monitoring from the menu. The on-device speech model downloads automatically. Meeting notes and titles use the Claude Code CLI (`claude`) with your existing login; no API key.
+
+Debug builds are **NN Earshot Dev** (`studio.noisyneighbor.earshot.dev`): their own privacy grants and settings, so they don't disturb an installed release. They read the same notes in `~/Library/Application Support/Earshot`.
 
 ## Use
 
@@ -34,7 +36,7 @@ Earshot ships a read-only MCP server, `earshot-mcp`, inside the app. Agents (Cla
 | Codex | `codex mcp add earshot -- "/Applications/NN Earshot.app/Contents/MacOS/earshot-mcp"` |
 | Cursor | Settings › Connect to Agents › Install (opens Cursor's install link), or add the JSON below to `~/.cursor/mcp.json` |
 | VS Code | Settings › Connect to Agents › Install (opens `vscode:mcp/install`), or run **MCP: Add Server…** with the command above |
-| Claude Desktop | Settings › Connect to Agents › Install: Earshot builds `NN Earshot.mcpb` and opens it in Claude Desktop, which asks you to confirm. (Custom connectors take remote URLs only.) Or add the JSON below to `claude_desktop_config.json` and restart Claude |
+| Claude Desktop | Settings › Connect to Agents › Install: Earshot opens its bundled `NN Earshot.mcpb` (Developer ID-signed in releases) in Claude Desktop, which asks you to confirm. The extension runs the helper from `NN Earshot.app` in `~/Applications` or `/Applications`. (Custom connectors take remote URLs only.) Or add the JSON below to `claude_desktop_config.json` and restart Claude |
 
 ```json
 {

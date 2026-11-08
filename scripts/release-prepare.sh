@@ -9,6 +9,7 @@ version=${1:?usage: release-prepare.sh <version>}
 build=${EARSHOT_BUILD_NUMBER:?EARSHOT_BUILD_NUMBER required (CI: the workflow run number)}
 [[ $build =~ ^[0-9]+$ ]] || { echo "✗ EARSHOT_BUILD_NUMBER must be a positive integer: $build" >&2; exit 1; }
 : "${EARSHOT_SIGN_IDENTITY:?EARSHOT_SIGN_IDENTITY required (e.g. Developer ID Application: Name (TEAMID))}"
+: "${MCPB_SIGN_KEY:?MCPB_SIGN_KEY required (Developer ID key, PEM; signs the Claude Desktop extension)}"
 
 rm -rf dist build/Earshot.xcarchive
 mkdir -p dist
@@ -42,6 +43,9 @@ codesign --verify --deep --strict --verbose=2 "$app"
     || { echo "✗ CFBundleVersion is not $build" >&2; exit 1; }
 [[ -n $(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$app/Contents/Info.plist") ]] \
     || { echo "✗ SUFeedURL is empty: not a Release build" >&2; exit 1; }
+# Claude Desktop checks the chain against the system trust store, as `mcpb verify` does.
+[[ $(node_modules/.bin/mcpb verify "$app/Contents/Resources/NN Earshot.mcpb") == *"Signed by: Developer ID Application"* ]] \
+    || { echo "✗ NN Earshot.mcpb is not signed with Developer ID" >&2; exit 1; }
 
 if [[ -n ${NOTARY_KEY:-} ]]; then
     : "${NOTARY_KEY_ID:?NOTARY_KEY_ID required with NOTARY_KEY}" "${NOTARY_KEY_ISSUER:?NOTARY_KEY_ISSUER required with NOTARY_KEY}"

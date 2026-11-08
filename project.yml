@@ -34,7 +34,10 @@ targets:
   Earshot:
     type: application
     platform: macOS
-    sources: [Earshot, Shared]
+    sources:
+      - path: Earshot
+        excludes: [Extension]
+      - Shared
     dependencies:
       - package: Sparkle
       # The MCP helper ships in Contents/MacOS, signed with the app.
@@ -46,8 +49,8 @@ targets:
     info:
       path: Earshot/Support/Info.plist
       properties:
-        CFBundleName: NN Earshot
-        CFBundleDisplayName: NN Earshot
+        CFBundleName: $(EARSHOT_APP_NAME)
+        CFBundleDisplayName: $(EARSHOT_APP_NAME)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSUIElement: true
@@ -66,7 +69,25 @@ targets:
         PRODUCT_NAME: NN Earshot
         PRODUCT_MODULE_NAME: Earshot
         PRODUCT_BUNDLE_IDENTIFIER: studio.noisyneighbor.earshot
+        EARSHOT_APP_NAME: NN Earshot
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      # Its own identity, so dev builds keep separate privacy grants (TCC pins them to the
+      # signing certificate) and settings from the installed release.
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: studio.noisyneighbor.earshot.dev
+          EARSHOT_APP_NAME: NN Earshot Dev
+    postBuildScripts:
+      # Before code signing, so the app's signature covers it.
+      - name: Claude Desktop extension
+        script: scripts/build-mcpb.sh "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/NN Earshot.mcpb" "$MARKETING_VERSION"
+        inputFiles:
+          - $(SRCROOT)/scripts/build-mcpb.sh
+          - $(SRCROOT)/Earshot/Extension/manifest.json
+          - $(SRCROOT)/Earshot/Extension/earshot
+          - $(SRCROOT)/Earshot/Extension/DeveloperIDG2CA.pem
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NN Earshot.mcpb
     scheme:
       testTargets: [EarshotTests]
   EarshotMCP:

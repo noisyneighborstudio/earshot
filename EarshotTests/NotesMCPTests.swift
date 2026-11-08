@@ -433,37 +433,57 @@ struct NotesMCPSocketStdioTests {
 }
 
 struct ClaudeDesktopExtensionTests {
-    @Test func manifestHasRequiredFieldsAndLaunchesBundledLauncher() throws {
-        let object = try #require(JSONSerialization.jsonObject(with: Data(AgentSetup.mcpbManifest(version: "1.2.3").utf8)) as? [String: Any])
-        #expect(object["manifest_version"] as? String == "0.3")
-        #expect(object["name"] as? String == "earshot")
-        #expect(object["version"] as? String == "1.2.3")
-        #expect((object["author"] as? [String: Any])?["name"] as? String == "Noisy Neighbor")
-        let server = try #require(object["server"] as? [String: Any])
-        #expect(server["type"] as? String == "binary")
-        #expect(server["entry_point"] as? String == "server/earshot")
-        #expect((server["mcp_config"] as? [String: Any])?["command"] as? String == "${__dirname}/server/earshot")
+    /// The extension built into the app, unpacked into a throwaway directory.
+    private func unpacked() throws -> URL {
+        let bundle = try #require(Bundle.main.url(forResource: "NN Earshot", withExtension: "mcpb"))
+        let dir = FileManager.default.temporaryDirectory.appending(path: "earshot-mcpb-\(UUID().uuidString)")
+        let unzip = Process()
+        unzip.executableURL = URL(filePath: "/usr/bin/ditto")
+        unzip.arguments = ["-x", "-k", bundle.path, dir.path]
+        try unzip.run()
+        unzip.waitUntilExit()
+        try #require(unzip.terminationStatus == 0)
+        return dir
     }
 
-    @Test func launcherExecsHelperWithArgumentsEvenWithQuotesInPath() throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "earshot's mcpb \(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    @Test func bundledManifestMatchesTheApp() throws {
+        let dir = try unpacked()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let helper = dir.appending(path: "earshot-mcp")
-        try Data("#!/bin/sh\necho \"ran $1\"\n".utf8).write(to: helper)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
-        let launcher = dir.appending(path: "launcher")
-        try Data(AgentSetup.mcpbLauncher(helper).utf8).write(to: launcher)
+        let object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: dir.appending(path: "manifest.json"))) as? [String: Any])
+        #expect(object["name"] as? String == AgentSetup.serverName)
+        #expect(object["version"] as? String == Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
+        let server = try #require(object["server"] as? [String: Any])
+        let entry = try #require(server["entry_point"] as? String)
+        #expect(FileManager.default.isExecutableFile(atPath: dir.appending(path: entry).path))
+        #expect(FileManager.default.fileExists(atPath: dir.appending(path: try #require(object["icon"] as? String)).path))
+    }
+
+    /// The launcher finds the app in ~/Applications (checked before /Applications) and hands over stdio.
+    @Test(.timeLimit(.minutes(1))) func launcherRunsTheInstalledAppsHelper() throws {
+        let dir = try unpacked()
+        let home = FileManager.default.temporaryDirectory.appending(path: "earshot-home-\(UUID().uuidString)")
+        defer { for url in [dir, home] { try? FileManager.default.removeItem(at: url) } }
+        try FileManager.default.createDirectory(at: home.appending(path: "Applications"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: home.appending(path: "Applications/NN Earshot.app"), withDestinationURL: Bundle.main.bundleURL)
 
         let process = Process()
-        process.executableURL = URL(filePath: "/bin/sh")
-        process.arguments = [launcher.path, "hello world"]
-        let out = Pipe()
-        process.standardOutput = out
+        process.executableURL = dir.appending(path: "server/earshot")
+        process.arguments = ["--data-dir", home.appending(path: "data").path]
+        process.environment = ["HOME": home.path]
+        let input = Pipe(), output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
         try process.run()
-        process.waitUntilExit()
-        #expect(process.terminationStatus == 0)
-        #expect(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == "ran hello world\n")
+        defer { process.terminate() }
+        input.fileHandleForWriting.write(Data(#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#.utf8 + [10]))
+        var reply = Data()
+        while !reply.contains(10) {
+            let chunk = output.fileHandleForReading.availableData
+            if chunk.isEmpty { break }
+            reply += chunk
+        }
+        #expect(String(decoding: reply, as: UTF8.self).contains(#""serverInfo""#))
     }
 
     @Test func installedStatusFromClaudeDesktopRecords() {
