@@ -1,51 +1,7 @@
 import Foundation
 import os
 
-struct Meeting: Codable, Identifiable, Sendable, Equatable {
-    enum Speaker: String, Codable, Sendable {
-        /// The user's microphone.
-        case me
-        /// Call audio: everyone else.
-        case others
-    }
-
-    struct Line: Codable, Sendable, Equatable {
-        var speaker: Speaker
-        var start: TimeInterval
-        var text: String
-        /// Who was talking per the call app, for "Others" lines.
-        var name: String?
-
-        var label: String { name ?? (speaker == .me ? "Me" : "Others") }
-    }
-
-    var id = UUID()
-    var title: String
-    var platform: String
-    var startedAt: Date
-    var endedAt: Date?
-    var lines: [Line] = []
-    /// Names seen talking in the call UI.
-    var participants: [String]?
-    var summary: String?
-    var summaryError: String?
-    enum Kind: String, Codable, Sendable {
-        /// A call: mic plus call audio.
-        case meeting
-        /// Just the user talking (mic only).
-        case note
-    }
-
-    /// Optional so meetings saved before these existed still decode.
-    var kind: Kind?
-    var starred: Bool?
-    var folder: String?
-
-    var isStarred: Bool { starred == true }
-    var isNote: Bool { kind == .note }
-    /// Saved, but without usable notes (failed, interrupted, or never written).
-    var needsNotes: Bool { endedAt != nil && (summary == nil || summaryError != nil) }
-
+extension Meeting {
     /// Merges the two streams into one timeline, naming "Others" lines from the speaker timeline.
     /// Mic segments that are just the call coming out of the speakers are dropped.
     static func lines(me: [TranscriptSegment], others: [TranscriptSegment], speakers: [SpeakerSample] = []) -> [Line] {
@@ -72,81 +28,6 @@ struct Meeting: Codable, Identifiable, Sendable, Equatable {
     private static func words(_ text: String) -> [String] {
         text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
     }
-
-    static func timestamp(_ seconds: TimeInterval) -> String {
-        let total = max(0, Int(seconds))
-        return total >= 3600
-            ? String(format: "%d:%02d:%02d", total / 3600, total / 60 % 60, total % 60)
-            : String(format: "%02d:%02d", total / 60, total % 60)
-    }
-
-    /// Plain transcript for Claude and for copying. Speaker labels are model-facing, so English.
-    var transcriptText: String {
-        lines.map { "[\(Self.timestamp($0.start))] \($0.label): \($0.text)" }
-            .joined(separator: "\n")
-    }
-
-    var duration: TimeInterval? { endedAt.map { $0.timeIntervalSince(startedAt) } }
-
-    /// "- [ ] Owner: task" lines in the notes. `line` indexes `summary` split on "\n".
-    var actionItems: [ActionItem] {
-        (summary ?? "").components(separatedBy: "\n").enumerated().compactMap { index, raw in
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            let open = line.hasPrefix("- [ ] ")
-            guard open || line.hasPrefix("- [x] ") || line.hasPrefix("- [X] ") else { return nil }
-            let (owner, text) = Self.splitOwner(String(line.dropFirst(6)))
-            return ActionItem(
-                meetingID: id, meetingTitle: title, meetingDate: startedAt,
-                line: index, owner: owner, text: text, done: !open)
-        }
-    }
-
-    /// "Owner: task" → (owner, task) when the prefix is short enough to be a name.
-    static func splitOwner(_ item: String) -> (String?, String) {
-        guard let colon = item.range(of: ": "), item.distance(from: item.startIndex, to: colon.lowerBound) <= 32 else {
-            return (nil, item)
-        }
-        return (String(item[..<colon.lowerBound]), String(item[colon.upperBound...]))
-    }
-
-    /// Open "- [ ]" items in the notes.
-    var openTaskCount: Int {
-        (summary ?? "").components(separatedBy: .newlines)
-            .filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("- [ ] ") }.count
-    }
-
-    /// Flips the checkbox on one line of the notes.
-    mutating func toggleTask(atLine index: Int) {
-        guard var lines = summary?.components(separatedBy: "\n"), lines.indices.contains(index) else { return }
-        let line = lines[index]
-        if let range = line.range(of: "- [ ] ") {
-            lines[index] = line.replacingCharacters(in: range, with: "- [x] ")
-        } else if let range = line.range(of: "- [x] ") {
-            lines[index] = line.replacingCharacters(in: range, with: "- [ ] ")
-        }
-        summary = lines.joined(separator: "\n")
-    }
-
-    var markdown: String {
-        var parts: [String] = []
-        if let summary { parts.append(summary) } else { parts.append("# \(title)") }
-        parts.append("## Transcript\n\n" + transcriptText)
-        return parts.joined(separator: "\n\n")
-    }
-}
-
-struct ActionItem: Identifiable, Hashable, Sendable {
-    let meetingID: Meeting.ID
-    let meetingTitle: String
-    let meetingDate: Date
-    /// Index into the meeting's `summary` lines; pass to `Meeting.toggleTask(atLine:)`.
-    let line: Int
-    let owner: String?
-    let text: String
-    let done: Bool
-
-    var id: String { "\(meetingID.uuidString)-\(line)" }
-    var isMine: Bool { owner == "Me" }
 }
 
 /// One JSON file per meeting in Application Support.
@@ -158,7 +39,7 @@ final class MeetingStore {
     @ObservationIgnored private let directory: URL
     @ObservationIgnored private let log = Logger(subsystem: "studio.noisyneighbor.earshot", category: "meetings")
 
-    init(directory: URL = URL.applicationSupportDirectory.appending(path: "Earshot/Meetings")) {
+    init(directory: URL = EarshotData.meetings) {
         self.directory = directory
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         meetings = files.filter { $0.pathExtension == "json" && $0.lastPathComponent != "folders.json" }.compactMap { url in

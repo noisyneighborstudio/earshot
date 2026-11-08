@@ -56,15 +56,56 @@ struct ClaudeCLI: Sendable {
     }
 
     func run(model: String, effort: String, system: String, input: String, timeout: Duration) async throws -> String {
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = Self.arguments(model: model, effort: effort, system: system)
         var environment = ProcessInfo.processInfo.environment
         environment["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
         environment["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
-        process.environment = environment
-        // Neutral directory, so no project CLAUDE.md or settings are discovered.
-        process.currentDirectoryURL = FileManager.default.temporaryDirectory
+        let output: Subprocess.Output
+        do {
+            // Neutral directory, so no project CLAUDE.md or settings are discovered.
+            output = try await Subprocess.run(
+                executable, Self.arguments(model: model, effort: effort, system: system), environment: environment,
+                directory: FileManager.default.temporaryDirectory, input: Data(input.utf8), timeout: timeout)
+        } catch is Subprocess.TimedOut {
+            throw ClaudeCLIError.timedOut
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let result = try? decoder.decode(Result.self, from: output.stdout) else {
+            throw ClaudeCLIError.failed(output.message)
+        }
+        guard !result.isError, let text = result.result else {
+            throw ClaudeCLIError.failed(result.result ?? "exit \(output.status)")
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// Runs a command to completion, draining stdout and stderr concurrently so a full pipe can't stall it.
+enum Subprocess {
+    struct TimedOut: Error {}
+
+    struct Output: Sendable {
+        let status: Int32
+        let stdout: Data
+        let stderr: Data
+
+        /// What went wrong, for the user: stderr, else stdout, else the exit status.
+        var message: String {
+            let text = String(decoding: stderr.isEmpty ? stdout : stderr, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? "exit \(status)" : text
+        }
+    }
+
+    static func run(
+        _ executable: URL, _ arguments: [String], environment: [String: String]? = nil, directory: URL? = nil,
+        input: Data = Data(), timeout: Duration
+    ) async throws -> Output {
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = arguments
+        if let environment { process.environment = environment }
+        if let directory { process.currentDirectoryURL = directory }
 
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         process.standardInput = stdin
@@ -84,28 +125,17 @@ struct ClaudeCLI: Sendable {
         defer { watchdog.cancel() }
 
         return try await withTaskCancellationHandler {
-            stdin.fileHandleForWriting.write(Data(input.utf8))
+            stdin.fileHandleForWriting.write(input)
             try stdin.fileHandleForWriting.close()
 
-            // Drain both pipes concurrently so a full pipe can't stall the child.
             async let out = Task.detached { stdout.fileHandleForReading.readDataToEndOfFile() }.value
             async let err = Task.detached { stderr.fileHandleForReading.readDataToEndOfFile() }.value
             let (output, errors) = await (out, err)
             var status: Int32 = -1
             for await code in exited.stream { status = code }
 
-            if timedOut.withLock({ $0 }) { throw ClaudeCLIError.timedOut }
-            let decoder = JSONDecoder()
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
-            guard let result = try? decoder.decode(Result.self, from: output) else {
-                let detail = String(decoding: errors.isEmpty ? output : errors, as: UTF8.self)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                throw ClaudeCLIError.failed(detail.isEmpty ? "exit \(status)" : detail)
-            }
-            guard !result.isError, let text = result.result else {
-                throw ClaudeCLIError.failed(result.result ?? "exit \(status)")
-            }
-            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if timedOut.withLock({ $0 }) { throw TimedOut() }
+            return Output(status: status, stdout: output, stderr: errors)
         } onCancel: {
             process.terminate()
         }

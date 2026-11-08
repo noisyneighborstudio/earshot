@@ -24,13 +24,23 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     exactVersion: 2.10.1
+  # Pinned past 0.9.0, whose NetworkTransport doesn't compile under Swift 6.4 (fixed in #301, untagged).
+  MCP:
+    url: https://github.com/modelcontextprotocol/swift-sdk
+    revision: 59fbf142699c09a1823d90c76b837dab3adf7008
 targets:
   Earshot:
     type: application
     platform: macOS
-    sources: [Earshot]
+    sources: [Earshot, Shared]
     dependencies:
       - package: Sparkle
+      # The MCP helper ships in Contents/MacOS, signed with the app.
+      - target: EarshotMCP
+        embed: true
+        codeSign: true
+        copy:
+          destination: executables
     info:
       path: Earshot/Support/Info.plist
       properties:
@@ -57,6 +67,21 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     scheme:
       testTargets: [EarshotTests]
+  EarshotMCP:
+    type: tool
+    platform: macOS
+    sources: [EarshotMCP, Shared]
+    dependencies:
+      - package: MCP
+    settings:
+      base:
+        PRODUCT_NAME: earshot-mcp
+        PRODUCT_MODULE_NAME: EarshotMCP
+        PRODUCT_BUNDLE_IDENTIFIER: studio.noisyneighbor.earshot.mcp
+        GENERATE_INFOPLIST_FILE: YES
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
+        # Only the app archives; the helper rides inside it.
+        SKIP_INSTALL: YES
   EarshotTests:
     type: bundle.unit-test
     platform: macOS

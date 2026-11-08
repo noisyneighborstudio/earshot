@@ -8,7 +8,7 @@ struct DictationsView: View {
     @State private var confirmingClear = false
 
     var body: some View {
-        let entries = HistoryStore.filter(model.history.entries, query: query)
+        let entries = HistoryEntry.filter(model.history.entries, query: query)
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Text("Dictations").font(.system(size: 22, weight: .bold))

@@ -89,9 +89,9 @@ struct HistoryStoreTests {
             HistoryEntry(app: "Slack", raw: "ship friday", text: "Ship Friday."),
             HistoryEntry(app: "Mail", raw: "um hello dana", text: "Hello Dana."),
         ]
-        #expect(HistoryStore.filter(entries, query: "").count == 2)
-        #expect(HistoryStore.filter(entries, query: "friday").map(\.app) == ["Slack"])
-        #expect(HistoryStore.filter(entries, query: "um hello").map(\.app) == ["Mail"])
-        #expect(HistoryStore.filter(entries, query: "mail").map(\.app) == ["Mail"])
+        #expect(HistoryEntry.filter(entries, query: "").count == 2)
+        #expect(HistoryEntry.filter(entries, query: "friday").map(\.app) == ["Slack"])
+        #expect(HistoryEntry.filter(entries, query: "um hello").map(\.app) == ["Mail"])
+        #expect(HistoryEntry.filter(entries, query: "mail").map(\.app) == ["Mail"])
     }
 }
