@@ -1,0 +1,57 @@
+name: Earshot
+options:
+  bundleIdPrefix: studio.noisyneighbor
+  deploymentTarget:
+    macOS: "26.0"
+  developmentLanguage: en
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    DEVELOPMENT_TEAM: P8ZBH5878Q
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_HARDENED_RUNTIME: YES
+    SWIFT_EMIT_LOC_STRINGS: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+targets:
+  Earshot:
+    type: application
+    platform: macOS
+    sources: [Earshot]
+    info:
+      path: Earshot/Support/Info.plist
+      properties:
+        CFBundleName: NN Earshot
+        CFBundleDisplayName: NN Earshot
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSUIElement: true
+        LSApplicationCategoryType: public.app-category.productivity
+        NSMicrophoneUsageDescription: Earshot listens while you hold the hotkey so it can turn your voice into text.
+        NSAudioCaptureUsageDescription: Earshot transcribes call audio so it can write notes for meetings you choose to record.
+    entitlements:
+      path: Earshot/Support/Earshot.entitlements
+      properties:
+        com.apple.security.device.audio-input: true
+    settings:
+      base:
+        PRODUCT_NAME: NN Earshot
+        PRODUCT_MODULE_NAME: Earshot
+        PRODUCT_BUNDLE_IDENTIFIER: studio.noisyneighbor.earshot
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    scheme:
+      testTargets: [EarshotTests]
+  EarshotTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [EarshotTests]
+    dependencies:
+      - target: Earshot
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: studio.noisyneighbor.earshot.tests
+        # The app's product name ("NN Earshot") differs from its target name.
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/NN Earshot.app/Contents/MacOS/NN Earshot"
+        BUNDLE_LOADER: "$(TEST_HOST)"
