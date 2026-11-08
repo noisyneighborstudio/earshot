@@ -397,6 +397,41 @@ struct NotesMCPEndToEndTests {
     }
 }
 
+/// Node (Claude Desktop, Claude Code) gives MCP servers a socketpair for stdio, whose st_dev is -1.
+struct NotesMCPSocketStdioTests {
+    @Test(.timeLimit(.minutes(1))) func answersInitializeOverSocketpair() throws {
+        // Like Node: one socketpair per stream, our ends close-on-exec so only the child holds its ends.
+        func pair() throws -> (ours: FileHandle, theirs: FileHandle) {
+            var fds: [Int32] = [0, 0]
+            try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
+            _ = fcntl(fds[0], F_SETFD, FD_CLOEXEC)
+            return (FileHandle(fileDescriptor: fds[0], closeOnDealloc: true), FileHandle(fileDescriptor: fds[1], closeOnDealloc: true))
+        }
+        let stdin = try pair(), stdout = try pair()
+
+        let process = Process()
+        process.executableURL = AgentSetup.helper(in: Bundle.main.bundleURL)
+        process.arguments = ["--data-dir", FileManager.default.temporaryDirectory.appending(path: "earshot-empty-\(UUID())").path]
+        process.standardInput = stdin.theirs
+        process.standardOutput = stdout.theirs
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        defer { process.terminate() }
+        try stdin.theirs.close()
+        try stdout.theirs.close()
+
+        stdin.ours.write(Data(#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"node","version":"1"}}}"#.utf8 + [10]))
+        var reply = Data()
+        while !reply.contains(10) {
+            let chunk = stdout.ours.availableData  // returns what's arrived; empty at EOF (the child died)
+            if chunk.isEmpty { break }
+            reply += chunk
+        }
+        #expect(String(decoding: reply, as: UTF8.self).contains(#""serverInfo""#))
+        #expect(process.isRunning)
+    }
+}
+
 struct ClaudeDesktopExtensionTests {
     @Test func manifestHasRequiredFieldsAndLaunchesBundledLauncher() throws {
         let object = try #require(JSONSerialization.jsonObject(with: Data(AgentSetup.mcpbManifest(version: "1.2.3").utf8)) as? [String: Any])

@@ -24,10 +24,12 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     exactVersion: 2.10.1
-  # Pinned past 0.9.0, whose NetworkTransport doesn't compile under Swift 6.4 (fixed in #301, untagged).
+  # Our fork: upstream 59fbf14 (past 0.9.0, which doesn't compile under Swift 6.4) plus a fix for
+  # StdioTransport trapping when stdio is a socketpair (st_dev == -1), which is how Node-based
+  # agents (Claude Desktop, Claude Code) launch MCP servers. Return upstream once that's fixed there.
   MCP:
-    url: https://github.com/modelcontextprotocol/swift-sdk
-    revision: 59fbf142699c09a1823d90c76b837dab3adf7008
+    url: https://github.com/noisyneighborstudio/swift-sdk
+    revision: b7a26b8d887fda9389a81f0c5feaa34e3d7e8ff7
 targets:
   Earshot:
     type: application
