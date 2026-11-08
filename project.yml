@@ -85,7 +85,7 @@ targets:
           - $(SRCROOT)/scripts/build-mcpb.sh
           - $(SRCROOT)/Earshot/Extension/manifest.json
           - $(SRCROOT)/Earshot/Extension/earshot
-          - $(SRCROOT)/Earshot/Extension/DeveloperIDG2CA.pem
+          - $(SRCROOT)/Earshot/Extension/DeveloperIDCA.pem
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NN Earshot.mcpb
     scheme:

@@ -21,5 +21,5 @@ ditto -c -k --norsrc "$stage" "$out"
 if [[ -n ${MCPB_SIGN_KEY:-} ]]; then
     : "${MCPB_SIGN_CERT:?MCPB_SIGN_CERT required with MCPB_SIGN_KEY}"
     "$root/node_modules/.bin/mcpb" sign "$out" --cert "$MCPB_SIGN_CERT" --key "$MCPB_SIGN_KEY" \
-        --intermediate "$ext/DeveloperIDG2CA.pem"
+        --intermediate "$ext/DeveloperIDCA.pem"
 fi
