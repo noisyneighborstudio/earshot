@@ -20,6 +20,51 @@ First launch: grant Microphone, Accessibility and Input Monitoring from the menu
 
 If fn opens the emoji picker, set System Settings › Keyboard › "Press 🌐 key to" → "Do Nothing".
 
+## Use your notes from any agent
+
+Earshot ships a read-only MCP server, `earshot-mcp`, inside the app. Agents (Claude Code, Codex, Cursor, VS Code, Claude Desktop, …) can then search your meeting notes, transcripts, action items and dictations. It runs locally over stdio, reads `~/Library/Application Support/Earshot`, and never writes there.
+
+**One click:** Settings › Connect to Agents. Each agent gets an Install button and shows whether it's connected. Move NN Earshot to Applications first, because agents launch the helper from that path.
+
+**By hand** (the helper is at `/Applications/NN Earshot.app/Contents/MacOS/earshot-mcp`):
+
+| Agent | Install |
+|---|---|
+| Claude Code | `claude mcp add --scope user earshot -- "/Applications/NN Earshot.app/Contents/MacOS/earshot-mcp"` |
+| Codex | `codex mcp add earshot -- "/Applications/NN Earshot.app/Contents/MacOS/earshot-mcp"` |
+| Cursor | Settings › Connect to Agents › Install (opens Cursor's install link), or add the JSON below to `~/.cursor/mcp.json` |
+| VS Code | Settings › Connect to Agents › Install (opens `vscode:mcp/install`), or run **MCP: Add Server…** with the command above |
+| Claude Desktop | Add the JSON below to `~/Library/Application Support/Claude/claude_desktop_config.json`, then restart Claude |
+
+```json
+{
+  "mcpServers": {
+    "earshot": {
+      "command": "/Applications/NN Earshot.app/Contents/MacOS/earshot-mcp"
+    }
+  }
+}
+```
+
+| Tool | What it does |
+|---|---|
+| `search_notes` | Ranked search over titles, people, notes, action items and transcripts. Keyword ranking (BM25) is fused with on-device NaturalLanguage sentence embeddings. Filters: date range, kind, participant, platform, folder, starred, status |
+| `list_meetings` | Newest first, with the same filters and paging |
+| `get_meeting` | Notes markdown and metadata. The transcript is optional and paged, with speakers and timestamps |
+| `list_action_items` | Open, done or all, filtered by owner, participant, meeting or date |
+| `search_dictations` | Dictation history, filtered by text, app or date |
+
+There are also resources (`earshot://meeting/<id>`, the notes plus the full transcript) and a `meeting_brief` prompt (person, topic) that collects your recent meetings with someone.
+
+Example prompts:
+
+- "What did we decide about pricing last week?"
+- "What do I owe Dana? Check my open action items."
+- "Brief me before my 1:1 with Kim." (or use the `meeting_brief` prompt)
+- "Find where someone mentioned the Q3 budget in a call, and quote it."
+
+A meeting with status `recording` is still being recorded, or Earshot quit during it. Its transcript is partial and it has no notes yet. If a file can't be read, results list it under `unreadable_files` and leave it out.
+
 ## How it works
 
 | Stage | File |

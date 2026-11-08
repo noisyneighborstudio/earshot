@@ -44,6 +44,8 @@ struct SettingsView: View {
                 Text("One word or phrase per line: names, jargon, product terms. Used for recognition and spelling.")
             }
 
+            AgentsSection()
+
             if updater.isEnabled {
                 Section {
                     LabeledContent("Version") {
