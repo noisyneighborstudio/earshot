@@ -13,6 +13,7 @@ final class AppModel {
     let suggestions = DictionarySuggestions()
     let navigation = AppNavigation()
     let meetingActions = MeetingActions()
+    let updater = Updater()
     let controller: DictationController
     let recorder: MeetingRecorder
 

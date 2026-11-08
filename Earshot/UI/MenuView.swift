@@ -65,6 +65,14 @@ struct MenuView: View {
                 }
             }
 
+            if let version = model.updater.pendingVersion {
+                Button { model.updater.check() } label: {
+                    Label("Update to \(version) available", systemImage: "arrow.down.circle.fill")
+                        .font(.caption)
+                }
+                .buttonStyle(.link)
+            }
+
             Divider()
             HStack(spacing: 2) {
                 FooterIcon(title: "Open Earshot", systemImage: "macwindow") { model.mainWindow.show(section: .home) }

@@ -1,0 +1,19 @@
+{
+  "branches": ["main"],
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    ["@semantic-release/exec", {
+      "prepareCmd": "./scripts/release-prepare.sh ${nextRelease.version}"
+    }],
+    ["@semantic-release/github", {
+      "successComment": false,
+      "failComment": false,
+      "failTitle": false,
+      "releasedLabels": false
+    }],
+    ["@semantic-release/exec", {
+      "publishCmd": "./scripts/publish-appcast.sh ${nextRelease.version} ${nextRelease.gitTag}"
+    }]
+  ]
+}

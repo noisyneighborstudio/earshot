@@ -1,0 +1,89 @@
+name: Test and release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.event_name == 'push' && 'sparkle-publication' || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+jobs:
+  release:
+    # Public repo: fork PRs must never run on our machines, so they go to GitHub-hosted macOS.
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'macos-26' || fromJSON('["self-hosted","macOS","earshot"]') }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          # semantic-release and publish-appcast.sh authenticate explicitly.
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Test
+        run: |
+          set -euo pipefail
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate --quiet
+          # GitHub release downloads (Sparkle's binary) intermittently answer 504; retry only that.
+          for attempt in 1 2 3 4 5 6; do
+            xcodebuild -resolvePackageDependencies -project Earshot.xcodeproj -scheme Earshot \
+              -clonedSourcePackagesDirPath build/SourcePackages && break
+            [ "$attempt" -lt 6 ] || exit 1
+            sleep $((attempt * 30))
+          done
+          # Ad-hoc signing: CI has no development certificate. Hardened runtime off so the
+          # ad-hoc test host can load the ad-hoc Sparkle framework.
+          xcodebuild test -quiet -project Earshot.xcodeproj -scheme Earshot -destination 'platform=macOS' \
+            -clonedSourcePackagesDirPath build/SourcePackages \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= ENABLE_HARDENED_RUNTIME=NO
+      - name: Import Developer ID certificate
+        if: github.event_name == 'push'
+        env:
+          CERTIFICATE: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.BUILD_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in CERTIFICATE CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD; do
+            [ -n "${!name}" ] || { echo "::error::secret for $name is not set"; exit 1; }
+          done
+          cert="$RUNNER_TEMP/developer-id.p12"; keychain="$RUNNER_TEMP/earshot.keychain-db"
+          umask 077; printf '%s' "$CERTIFICATE" | base64 -D > "$cert"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security import "$cert" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$keychain" >/dev/null
+          # Add to (don't replace) the search list: the runner machine's other keychains stay usable.
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+      - name: Release
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # Only increases. Renaming this workflow file resets it, so don't.
+          EARSHOT_BUILD_NUMBER: ${{ github.run_number }}
+          EARSHOT_SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_KEY_ISSUER: ${{ secrets.NOTARY_KEY_ISSUER }}
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          for name in EARSHOT_SIGN_IDENTITY SPARKLE_PRIVATE_KEY; do
+            [ -n "${!name}" ] || { echo "::error::secret for $name is not set"; exit 1; }
+          done
+          npm ci --no-audit --no-fund
+          npx semantic-release
+      - name: Remove temporary credentials
+        if: always() && github.event_name == 'push'
+        run: |
+          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary.p8"
+          keychain="$RUNNER_TEMP/earshot.keychain-db"
+          security list-keychains -d user -s $(security list-keychains -d user | tr -d '"' | grep -vF "$keychain")
+          [ ! -e "$keychain" ] || security delete-keychain "$keychain"

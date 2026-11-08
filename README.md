@@ -31,3 +31,21 @@ If fn opens the emoji picker, set System Settings › Keyboard › "Press 🌐 k
 | Paste with clipboard restore | `Earshot/Insertion/` |
 | Meeting notes + titles (Claude via `claude -p`) | `Earshot/Meetings/` |
 | State machine | `Earshot/Core/DictationController.swift` |
+
+## Releases
+
+Earshot updates itself with Sparkle 2. Every push to `main` runs `.github/workflows/release.yml`: tests, then semantic-release. Conventional commits pick the version (`feat:` minor, `fix:` patch, `!` major); a push with no releasable commits publishes nothing. `CFBundleVersion` is the workflow run number, which only increases.
+
+- `scripts/release-prepare.sh` archives a Developer ID build, notarizes and staples it when the notary secrets exist, and zips it.
+- `scripts/publish-appcast.sh` signs the zip with the Sparkle EdDSA key, checks it against the app's `SUPublicEDKey`, uploads it to the GitHub release, and commits `appcast.xml` to the `appcasts` branch: `https://raw.githubusercontent.com/noisyneighborstudio/earshot/appcasts/appcast.xml`.
+
+Only Release builds check for updates (`EARSHOT_FEED_URL` in `project.yml`). The Sparkle key is login-keychain account `earshot` (`generate_keys --account earshot`).
+
+| Secret | What |
+| ------ | ---- |
+| `DEVELOPER_ID_CERTIFICATE_BASE64` | Developer ID Application certificate + private key as .p12, base64 |
+| `DEVELOPER_ID_CERTIFICATE_PASSWORD` | the .p12 export password |
+| `BUILD_KEYCHAIN_PASSWORD` | any random string (throwaway CI keychain) |
+| `DEVELOPER_ID_APPLICATION` | identity name, e.g. `Developer ID Application: Name (TEAMID)` |
+| `SPARKLE_PRIVATE_KEY` | `generate_keys --account earshot -x <file>` |
+| `NOTARY_KEY_P8`, `NOTARY_KEY_ID`, `NOTARY_KEY_ISSUER` | App Store Connect API key; without them builds are signed but not notarized |

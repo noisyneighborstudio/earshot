@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var settings: AppSettings
     let speech: SpeechEngine
+    let updater: Updater
 
     var body: some View {
         Form {
@@ -41,6 +42,17 @@ struct SettingsView: View {
                 Text("Dictionary")
             } footer: {
                 Text("One word or phrase per line: names, jargon, product terms. Used for recognition and spelling.")
+            }
+
+            if updater.isEnabled {
+                Section {
+                    LabeledContent("Version") {
+                        Text(verbatim: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
+                    }
+                    Button("Check for Updates…") { updater.check() }
+                } header: {
+                    Text("Updates")
+                }
             }
 
             Section {

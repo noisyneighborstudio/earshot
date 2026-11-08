@@ -14,11 +14,23 @@ settings:
     ENABLE_HARDENED_RUNTIME: YES
     SWIFT_EMIT_LOC_STRINGS: YES
     LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+  configs:
+    # Only Release builds check for updates. The feed is the `appcasts` branch (scripts/publish-appcast.sh);
+    # the key is login-keychain account `earshot` (generate_keys --account earshot -p).
+    Release:
+      EARSHOT_FEED_URL: https://raw.githubusercontent.com/noisyneighborstudio/earshot/appcasts/appcast.xml
+      EARSHOT_ED_PUBLIC_KEY: I6mvrZnbVwAeSfz9qyWdDw7EeuujnT7sUuly59RPeik=
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.1
 targets:
   Earshot:
     type: application
     platform: macOS
     sources: [Earshot]
+    dependencies:
+      - package: Sparkle
     info:
       path: Earshot/Support/Info.plist
       properties:
@@ -28,6 +40,9 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSUIElement: true
         LSApplicationCategoryType: public.app-category.productivity
+        SUFeedURL: $(EARSHOT_FEED_URL)
+        SUPublicEDKey: $(EARSHOT_ED_PUBLIC_KEY)
+        SUEnableAutomaticChecks: true
         NSMicrophoneUsageDescription: Earshot listens while you hold the hotkey so it can turn your voice into text.
         NSAudioCaptureUsageDescription: Earshot transcribes call audio so it can write notes for meetings you choose to record.
     entitlements:
