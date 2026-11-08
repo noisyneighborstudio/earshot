@@ -66,6 +66,9 @@ jobs:
         if: github.event_name == 'push'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 76a59d239619ed344d267008c790ba18
+          WRANGLER_SEND_METRICS: "false"
           # Only increases. Renaming this workflow file resets it, so don't.
           EARSHOT_BUILD_NUMBER: ${{ github.run_number }}
           EARSHOT_SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}
@@ -75,7 +78,7 @@ jobs:
           NOTARY_KEY: ${{ secrets.NOTARY_KEY_P8 }}
         run: |
           set -euo pipefail
-          for name in EARSHOT_SIGN_IDENTITY SPARKLE_PRIVATE_KEY; do
+          for name in EARSHOT_SIGN_IDENTITY SPARKLE_PRIVATE_KEY CLOUDFLARE_API_TOKEN; do
             [ -n "${!name}" ] || { echo "::error::secret for $name is not set"; exit 1; }
           done
           npm ci --no-audit --no-fund

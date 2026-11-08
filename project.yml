@@ -15,10 +15,10 @@ settings:
     SWIFT_EMIT_LOC_STRINGS: YES
     LOCALIZATION_PREFERS_STRING_CATALOGS: YES
   configs:
-    # Only Release builds check for updates. The feed is the `appcasts` branch (scripts/publish-appcast.sh);
+    # Only Release builds check for updates. The feed is R2 bucket `earshot-releases` (scripts/publish-appcast.sh);
     # the key is login-keychain account `earshot` (generate_keys --account earshot -p).
     Release:
-      EARSHOT_FEED_URL: https://raw.githubusercontent.com/noisyneighborstudio/earshot/appcasts/appcast.xml
+      EARSHOT_FEED_URL: https://earshot-updates.noisyneighbor.studio/appcast.xml
       EARSHOT_ED_PUBLIC_KEY: I6mvrZnbVwAeSfz9qyWdDw7EeuujnT7sUuly59RPeik=
 packages:
   Sparkle:
