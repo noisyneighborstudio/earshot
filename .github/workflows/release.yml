@@ -29,6 +29,13 @@ jobs:
           set -euo pipefail
           brew install xcodegen
           xcodegen generate --quiet
+          # GitHub release downloads (Sparkle's binary) intermittently answer 504; retry only that.
+          for attempt in 1 2 3 4 5 6; do
+            xcodebuild -resolvePackageDependencies -project Earshot.xcodeproj -scheme Earshot \
+              -clonedSourcePackagesDirPath build/SourcePackages && break
+            [ "$attempt" -lt 6 ] || exit 1
+            sleep $((attempt * 30))
+          done
           # Ad-hoc signing: CI has no development certificate. Hardened runtime off so the
           # ad-hoc test host can load the ad-hoc Sparkle framework.
           xcodebuild test -quiet -project Earshot.xcodeproj -scheme Earshot -destination 'platform=macOS' \
