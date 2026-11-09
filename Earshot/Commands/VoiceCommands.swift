@@ -104,6 +104,7 @@ final class VoiceCommands {
             + context.menu.filter(\.enabled).map(ClaudeRouter.Candidate.menu)
             + apps.values.sorted { $0.lastPathComponent < $1.lastPathComponent }
                 .map { ClaudeRouter.Candidate.app(name: $0.deletingPathExtension().lastPathComponent, url: $0) }
+            + [.website]
         askingClaude = true
         let route: ClaudeRouter.Route?
         do {
@@ -172,9 +173,12 @@ final class VoiceCommands {
         case .openApp(_, let url):
             try await NSWorkspace.shared.openApplication(at: url, configuration: .init())
             return String(localized: "Opened \(url.deletingPathExtension().lastPathComponent)")
-        case .openURL(let url):
+        case .openURL(let url, nil):
             try open(url)
             return String(localized: "Opened \(url.host() ?? url.absoluteString)")
+        case .openURL(let url, let browser?):
+            try await NSWorkspace.shared.open([url], withApplicationAt: browser, configuration: .init())
+            return String(localized: "Opened \(url.host() ?? url.absoluteString) in \(browser.deletingPathExtension().lastPathComponent)")
         case .action(let action, let parameters):
             var values = parameters
             values["app"] = context.bundleID
@@ -236,6 +240,9 @@ final class VoiceCommands {
         case .action(let chosen, let parameters) where parameters.isEmpty:
             target = chosen.name
             action = chosen
+        case .openURL(let url, nil):
+            target = url.host() ?? url.absoluteString
+            action = VoiceAction(name: String(localized: "Open \(target)"), say: [phrase], steps: [.openURL(url.absoluteString)])
         case .action, .openURL:
             return nil
         }

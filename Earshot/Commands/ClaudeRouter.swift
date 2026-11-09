@@ -9,9 +9,12 @@ enum ClaudeRouter {
         case action(VoiceAction)
         case menu(MenuItem)
         case app(name: String, url: URL)
+        /// Any site Claude knows the address of: "open hacker news in the browser".
+        case website
 
         var line: String {
             switch self {
+            case .website: "Open website"
             case .action(let action): "Action: \(action.name) (says: \(action.say.joined(separator: " / ")))"
             case .menu(let item): "Menu: \(item.display)"
             case .app(let name, _): "Open app: \(name)"
@@ -24,6 +27,7 @@ enum ClaudeRouter {
             case .action(let action): action.name
             case .menu(let item): item.display
             case .app(let name, _): name
+            case .website: String(localized: "Website")
             }
         }
 
@@ -107,6 +111,10 @@ enum ClaudeRouter {
         switch candidate {
         case .menu(let item): return .menu(item)
         case .app(let name, let url): return .openApp(name: name, url: url)
+        case .website:
+            guard let value = parameters?.first, parameters?.count == 1, let url = URL(string: value),
+                  ["http", "https"].contains(url.scheme?.lowercased()), url.host() != nil else { return nil }
+            return .openURL(url)
         case .action(let action):
             let names = action.say.lazy.map { Phrase($0).parameters }.first { !$0.isEmpty } ?? []
             let values = parameters ?? []
@@ -124,6 +132,7 @@ enum ClaudeRouter {
         Reply with ONLY JSON: {"command": "<the chosen line, copied exactly, without the leading dash>", \
         "parameters": ["…"]}, or {"command": null} for none. parameters: for an Action whose phrases have \
         {placeholders}, their values in order, from what the user said; otherwise [].
+        "Open website" opens any site: its one parameter is the site's full https URL, if you know it.
         If it could mean two to four lines and you can't tell which, ask instead: {"question": "<short question>", \
         "options": ["<line>", "<line>"], "parameters": [...]}. Only ask when it's genuinely ambiguous.
         """

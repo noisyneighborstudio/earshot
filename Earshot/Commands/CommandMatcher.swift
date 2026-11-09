@@ -4,11 +4,13 @@ enum CommandMatch: Equatable {
     case action(VoiceAction, parameters: [String: String])
     case menu(MenuItem)
     case openApp(name: String, url: URL)
-    case openURL(URL)
+    /// In the given browser, else the default one.
+    case openURL(URL, in: URL? = nil)
 }
 
 /// Exact matching, in order: actions scoped to this app or page, then the app's own menu items,
-/// then global actions, then built-ins ("open Safari", "go to example.com"). Pure, so it's testable.
+/// then global actions, then built-ins ("open Safari", "go to example.com", "open the website
+/// example.com", "open example.com in Chrome"). Pure, so it's testable.
 struct CommandMatcher {
     var actions: [VoiceAction]
     var menu: [MenuItem]
@@ -43,12 +45,29 @@ struct CommandMatcher {
 
     /// Words that point at whatever's in front: "save this", "close it".
     private static let objects = ["this", "it", "that", "this page", "this file", "the page", "the file", "page", "file"]
-    private static let openVerbs = ["open", "launch", "start", "switch to", "go to", "show"]
+    private static let openVerbs = ["open", "launch", "start", "switch to", "go to", "show", "visit", "browse to", "navigate to"]
+    private static let siteWords = ["the website", "website", "the site", "site", "the page", "page"]
+    private static let browserWords = ["the browser", "a browser", "my browser", "browser", "a new tab", "new tab"]
 
     private func builtIn(_ text: String) -> CommandMatch? {
         for verb in Self.openVerbs where text.hasPrefix(verb + " ") {
-            let target = String(text.dropFirst(verb.count + 1))
-            if let app = apps[target] { return .openApp(name: target, url: app) }
+            var target = String(text.dropFirst(verb.count + 1))
+            // "the website …" or "… in the browser" mean a site, never an app of that name.
+            var web = false
+            if let word = Self.siteWords.first(where: { target.hasPrefix($0 + " ") }) {
+                target = String(target.dropFirst(word.count + 1))
+                web = true
+            }
+            if let range = target.range(of: " in ", options: .backwards) {
+                let place = String(target[range.upperBound...]), site = String(target[..<range.lowerBound])
+                if Self.browserWords.contains(place) {
+                    target = site
+                    web = true
+                } else if let browser = apps[place], let url = Self.site(site) {
+                    return .openURL(url, in: browser)
+                }
+            }
+            if !web, let app = apps[target] { return .openApp(name: target, url: app) }
             if let url = Self.site(target) { return .openURL(url) }
         }
         return nil

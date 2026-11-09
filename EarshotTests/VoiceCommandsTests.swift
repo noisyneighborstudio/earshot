@@ -109,6 +109,25 @@ struct CommandMatcherTests {
         #expect(m.match("open the pod bay doors") == nil)
     }
 
+    @Test func websitePhrases() {
+        let m = matcher([], menu: [])
+        let example = URL(string: "https://example.com")!, safari = URL(filePath: "/Applications/Safari.app")
+        #expect(m.match("open the website example.com") == .openURL(example))
+        #expect(m.match("Open website example dot com.") == .openURL(example))
+        #expect(m.match("visit example.com") == .openURL(example))
+        #expect(m.match("open example.com in the browser") == .openURL(example))
+        #expect(m.match("open example.com in Safari") == .openURL(example, in: safari))
+        #expect(m.match("open safari in the browser") == nil, "a site, not the app; no domain, so Claude decides")
+        #expect(m.match("open hacker news in the browser") == nil)
+    }
+
+    @Test func claudeOpensAnyWebsite() {
+        let url = URL(string: "https://news.ycombinator.com")!
+        #expect(ClaudeRouter.match(.init(command: "Open website", parameters: [url.absoluteString]), candidates: [.website]) == .openURL(url))
+        #expect(ClaudeRouter.match(.init(command: "Open website", parameters: ["hacker news"]), candidates: [.website]) == nil)
+        #expect(ClaudeRouter.match(.init(command: "Open website", parameters: ["file:///etc/passwd"]), candidates: [.website]) == nil)
+    }
+
     @Test func actionParametersComeFromTheUtterance() throws {
         let search = try action(#"{"name":"HN","say":["search hacker news for {query}"],"steps":[{"open_url":"https://hn.algolia.com/?q={query}"}]}"#)
         #expect(matcher([search], menu: []).match("Search Hacker News for Swift concurrency") == .action(search, parameters: ["query": "swift concurrency"]))
@@ -246,12 +265,21 @@ struct LearningTests {
         #expect(learned.steps == [.menu(["Bookmarks", "Add Bookmark…"])])
     }
 
+    @Test func learnsWebsites() throws {
+        let commands = try commands()
+        defer { try? FileManager.default.removeItem(at: commands.library.directory) }
+        let learned = try #require(try commands.learn("open hacker news in the browser", as: .openURL(URL(string: "https://news.ycombinator.com")!), context: CommandContext()))
+        #expect(learned.target == "news.ycombinator.com")
+        #expect(commands.actions.first?.action.steps == [.openURL("https://news.ycombinator.com")])
+    }
+
     @Test func skipsCommandsWithParametersOrURLs() throws {
         let commands = try commands()
         defer { try? FileManager.default.removeItem(at: commands.library.directory) }
         let search = try action(#"{"name":"HN","say":["hn {query}"],"steps":[{"open_url":"https://x/{query}"}]}"#)
         #expect(try commands.learn("hacker news swift", as: .action(search, parameters: ["query": "swift"]), context: CommandContext()) == nil)
-        #expect(try commands.learn("example", as: .openURL(URL(string: "https://example.com")!), context: CommandContext()) == nil)
+        #expect(try commands.learn("example", as: .openURL(URL(string: "https://example.com")!, in: URL(filePath: "/Applications/Safari.app")),
+                                   context: CommandContext()) == nil, "a specific browser can't be saved yet")
     }
 }
 
