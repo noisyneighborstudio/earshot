@@ -198,3 +198,55 @@ struct ClaudeRouterTests {
         #expect(text == "Frontmost app: Finder\nCommands:\n- Open app: iTerm\n\nThe user said: \"Open High Term\"")
     }
 }
+
+@MainActor
+struct LearningTests {
+    private func commands() throws -> VoiceCommands {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "earshot-learn-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return VoiceCommands(library: ActionLibrary(directory: dir))
+    }
+
+    @Test func learnsAppPhrasesIntoOneActionAndUndoes() throws {
+        let commands = try commands()
+        defer { try? FileManager.default.removeItem(at: commands.library.directory) }
+        let iterm = CommandMatch.openApp(name: "iterm", url: URL(filePath: "/Applications/iTerm.app"))
+        let context = CommandContext(appName: "Finder", bundleID: "com.apple.finder")
+
+        let first = try #require(try commands.learn("Open High Term.", as: iterm, context: context))
+        #expect(first.phrase == "open high term")
+        #expect(first.previous == nil)
+        #expect(commands.actions.map(\.action.say) == [["open high term"]])
+        #expect(commands.actions.first?.action.steps == [.openApp("iTerm")])
+
+        let second = try #require(try commands.learn("open eye term", as: iterm, context: context))
+        #expect(second.file.lastPathComponent == first.file.lastPathComponent)
+        #expect(commands.actions.map(\.action.say) == [["open high term", "open eye term"]])
+        // Now an exact match: no Claude next time.
+        let matcher = CommandMatcher(actions: commands.actions.map(\.action), menu: [], apps: [:], bundleID: "com.apple.finder")
+        #expect(matcher.match("Open eye term") == .action(commands.actions[0].action, parameters: [:]))
+
+        try commands.forget(second)
+        #expect(commands.actions.map(\.action.say) == [["open high term"]])
+        try commands.forget(first)
+        #expect(commands.actions.isEmpty)
+    }
+
+    @Test func learnsMenuItemsScopedToTheApp() throws {
+        let commands = try commands()
+        defer { try? FileManager.default.removeItem(at: commands.library.directory) }
+        let item = MenuItem(path: ["Bookmarks", "Add Bookmark…"], enabled: true)
+        _ = try commands.learn("stash this page", as: .menu(item), context: CommandContext(appName: "Safari", bundleID: "com.apple.Safari"))
+        let learned = try #require(commands.actions.first?.action)
+        #expect(learned.when == .init(app: "com.apple.Safari"))
+        #expect(learned.steps == [.menu(["Bookmarks", "Add Bookmark…"])])
+    }
+
+    @Test func skipsCommandsWithParametersOrURLs() throws {
+        let commands = try commands()
+        defer { try? FileManager.default.removeItem(at: commands.library.directory) }
+        let search = try action(#"{"name":"HN","say":["hn {query}"],"steps":[{"open_url":"https://x/{query}"}]}"#)
+        #expect(try commands.learn("hacker news swift", as: .action(search, parameters: ["query": "swift"]), context: CommandContext()) == nil)
+        #expect(try commands.learn("example", as: .openURL(URL(string: "https://example.com")!), context: CommandContext()) == nil)
+    }
+}

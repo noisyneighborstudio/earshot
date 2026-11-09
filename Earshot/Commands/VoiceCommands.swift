@@ -8,7 +8,8 @@ import os
 @Observable
 final class VoiceCommands {
     enum Outcome: Equatable {
-        case done(String)
+        /// What was done, and the phrase learned from it if Claude had to resolve it.
+        case done(String, learned: Learned?)
         case proposed(String)
         case noMatch(String)
         case failed(String)
@@ -19,6 +20,15 @@ final class VoiceCommands {
     private(set) var invalid: [ActionLibrary.Invalid] = []
     /// While Claude drafts an action or picks a command.
     private(set) var askingClaude = false
+
+    /// What Claude resolved, saved as an exact phrase so next time needs no Claude. Undoable.
+    struct Learned: Equatable {
+        let phrase: String
+        let target: String
+        let file: URL
+        /// The file's contents before, or nil if learning created it.
+        let previous: Data?
+    }
 
     @ObservationIgnored let library: ActionLibrary
     @ObservationIgnored private let log = Logger(subsystem: "studio.noisyneighbor.earshot", category: "commands")
@@ -72,6 +82,7 @@ final class VoiceCommands {
         let matcher = CommandMatcher(actions: actions, menu: context.menu, apps: apps, bundleID: context.bundleID, url: context.url)
         do {
             var match = matcher.match(utterance)
+            let viaClaude = match == nil
             if match == nil, let cli = ClaudeCLI.locate() {
                 let candidates = actions.filter { $0.applies(app: context.bundleID, url: context.url) }.map(ClaudeRouter.Candidate.action)
                     + context.menu.filter(\.enabled).map(ClaudeRouter.Candidate.menu)
@@ -84,7 +95,14 @@ final class VoiceCommands {
             guard let match else {
                 return .noMatch(String(localized: "No command for “\(utterance)” in \(context.appName). Say “make an action …” to add one."))
             }
-            return .done(try await perform(match, context: context))
+            let done = try await perform(match, context: context)
+            guard viaClaude else { return .done(done, learned: nil) }
+            do {
+                return .done(done, learned: try learn(utterance, as: match, context: context))
+            } catch {
+                log.error("couldn't learn “\(utterance)”: \(error.localizedDescription)")
+                return .done(done, learned: nil)
+            }
         } catch {
             log.error("command failed: \(error.localizedDescription)")
             return .failed(error.localizedDescription)
@@ -143,6 +161,51 @@ final class VoiceCommands {
 
     private func open(_ url: URL) throws {
         guard NSWorkspace.shared.open(url) else { throw ActionError(String(localized: "Couldn't open \(url.absoluteString).")) }
+    }
+
+    // MARK: Learning
+
+    /// Saves the utterance as a phrase for what Claude chose: added to an action with the same steps
+    /// and scope if there is one, else a new action. Commands with parameters or URLs aren't learned.
+    func learn(_ utterance: String, as match: CommandMatch, context: CommandContext) throws -> Learned? {
+        let phrase = Phrase.normalize(utterance)
+        guard !phrase.isEmpty else { return nil }
+        let action: VoiceAction, target: String
+        switch match {
+        case .openApp(_, let url):
+            target = url.deletingPathExtension().lastPathComponent
+            action = VoiceAction(name: String(localized: "Open \(target)"), say: [phrase], steps: [.openApp(target)])
+        case .menu(let item):
+            target = item.display
+            action = VoiceAction(name: String(localized: "\(item.title) in \(context.appName)"), say: [phrase],
+                                 when: .init(app: context.bundleID), steps: [.menu(item.path)])
+        case .action(let chosen, let parameters) where parameters.isEmpty:
+            target = chosen.name
+            action = chosen
+        case .action, .openURL:
+            return nil
+        }
+        reload()
+        if let existing = actions.first(where: { $0.action.steps == action.steps && $0.action.when == action.when }) {
+            let previous = try Data(contentsOf: existing.file)
+            var updated = existing.action
+            updated.say.append(phrase)
+            try library.save(updated, to: existing.file)
+            reload()
+            return Learned(phrase: phrase, target: target, file: existing.file, previous: previous)
+        }
+        let file = try library.add(action)
+        reload()
+        return Learned(phrase: phrase, target: target, file: file, previous: nil)
+    }
+
+    func forget(_ learned: Learned) throws {
+        if let previous = learned.previous {
+            try previous.write(to: learned.file, options: .atomic)
+        } else {
+            try FileManager.default.removeItem(at: learned.file)
+        }
+        reload()
     }
 
     // MARK: Making actions

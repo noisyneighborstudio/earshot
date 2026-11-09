@@ -12,6 +12,8 @@ final class DictationController {
         enum Kind { case clipboard, error, done }
         let text: String
         let kind: Kind
+        /// A phrase just learned: the toast offers Undo.
+        var learned: VoiceCommands.Learned?
     }
 
     enum Phase: Equatable {
@@ -29,6 +31,8 @@ final class DictationController {
     private(set) var notice: Notice? { didSet { stateChanged() } }
 
     @ObservationIgnored var onOverlayVisibilityChange: ((Bool) -> Void)?
+    /// The overlay takes clicks only while it offers Undo; otherwise clicks pass through.
+    @ObservationIgnored var onOverlayInteractiveChange: ((Bool) -> Void)?
     @ObservationIgnored var onActiveChange: ((Bool) -> Void)?
     /// After a paste landed: the inserted text and where it went (for correction tracking).
     @ObservationIgnored var onInserted: ((String, FocusContext) -> Void)?
@@ -207,13 +211,26 @@ final class DictationController {
             guard current == generation else { return }
             phase = .idle
             switch outcome {
-            case .done(let what): show(what, kind: .done)
+            case .done(let what, nil): show(what, kind: .done)
+            case .done(let what, let learned?):
+                show(String(localized: "\(what) · Remembered “\(learned.phrase)”"), kind: .done, learned: learned, for: .seconds(6))
             case .proposed(let message): show(message, kind: .done, for: .seconds(5))
             case .noMatch(let message), .failed(let message): show(message, for: .seconds(5))
             }
         } catch {
             guard current == generation, !Task.isCancelled else { return }
             phase = .idle
+            show(error.localizedDescription)
+        }
+    }
+
+    /// Undo on the "Remembered …" toast.
+    func forgetLearned() {
+        guard let learned = notice?.learned else { return }
+        do {
+            try commands.forget(learned)
+            show(String(localized: "Forgot “\(learned.phrase)”"), kind: .done)
+        } catch {
             show(error.localizedDescription)
         }
     }
@@ -232,10 +249,11 @@ final class DictationController {
 
     // MARK: - Feedback
 
-    private func show(_ message: String, kind: Notice.Kind = .error, for duration: Duration = .seconds(3)) {
+    private func show(_ message: String, kind: Notice.Kind = .error, learned: VoiceCommands.Learned? = nil,
+                      for duration: Duration = .seconds(3)) {
         noticeGeneration += 1
         let current = noticeGeneration
-        notice = Notice(text: message, kind: kind)
+        notice = Notice(text: message, kind: kind, learned: learned)
         Task {
             try? await Task.sleep(for: duration)
             if noticeGeneration == current { notice = nil }
@@ -249,6 +267,7 @@ final class DictationController {
 
     private func stateChanged() {
         onOverlayVisibilityChange?(phase != .idle || notice != nil)
+        onOverlayInteractiveChange?(phase == .idle && notice?.learned != nil)
         onActiveChange?(phase != .idle)
     }
 }

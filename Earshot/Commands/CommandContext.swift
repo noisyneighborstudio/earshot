@@ -20,6 +20,12 @@ struct CommandContext {
     /// Parallel to `menu`, for pressing an item.
     fileprivate var elements: [AXUIElement] = []
 
+    init(appName: String = "", bundleID: String = "", url: String? = nil) {
+        self.appName = appName
+        self.bundleID = bundleID
+        self.url = url
+    }
+
     static func capture() -> CommandContext {
         guard let app = NSWorkspace.shared.frontmostApplication else { return CommandContext() }
         let axApp = AXUIElementCreateApplication(app.processIdentifier)

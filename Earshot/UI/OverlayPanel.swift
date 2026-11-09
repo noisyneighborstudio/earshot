@@ -22,8 +22,14 @@ final class OverlayPanel {
         panel.hasShadow = false
         panel.level = .statusBar
         panel.ignoresMouseEvents = true
+        // Undo is clickable without taking focus from the user's app.
+        panel.becomesKeyOnlyIfNeeded = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.contentView = NSHostingView(rootView: OverlayView(controller: controller))
+    }
+
+    func setInteractive(_ interactive: Bool) {
+        panel.ignoresMouseEvents = !interactive
     }
 
     func setVisible(_ visible: Bool) {
@@ -129,6 +135,14 @@ struct OverlayView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Self.tint(notice.kind))
                 Text(verbatim: notice.text).lineLimit(2)
+                if notice.learned != nil {
+                    Button("Undo") { controller.forgetLearned() }
+                        .buttonStyle(.plain)
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
+                        .background(.white.opacity(0.16), in: Capsule())
+                }
             }
         }
     }

@@ -43,6 +43,7 @@ final class AppModel {
         }
 
         controller.onOverlayVisibilityChange = { overlay.setVisible($0) }
+        controller.onOverlayInteractiveChange = { overlay.setInteractive($0) }
         controller.onActiveChange = { hotkeys.swallowEscape = $0 }
         controller.onInserted = { corrections.didInsert($0, context: $1) }
         settings.onHotkeyChange = { hotkeys.hotkey = $0 }

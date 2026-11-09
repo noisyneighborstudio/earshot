@@ -262,13 +262,30 @@ struct ActionLibrary: Sendable {
     /// Writes a proposal; never overwrites one.
     @discardableResult
     func propose(_ action: VoiceAction) throws -> URL {
+        try create(action, in: proposed)
+    }
+
+    /// Adds an approved action, e.g. one learned from a command Claude resolved.
+    @discardableResult
+    func add(_ action: VoiceAction) throws -> URL {
+        try create(action, in: directory)
+    }
+
+    /// Replaces an action's file (editing, or adding a learned phrase).
+    func save(_ action: VoiceAction, to file: URL) throws {
         if let problem = action.problems().first { throw ActionError(problem) }
-        try FileManager.default.createDirectory(at: proposed, withIntermediateDirectories: true)
+        try Self.encoder.encode(action).write(to: file, options: .atomic)
+    }
+
+    private func create(_ action: VoiceAction, in folder: URL) throws -> URL {
+        if let problem = action.problems().first { throw ActionError(problem) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let slug = Phrase.normalize(action.name).replacingOccurrences(of: " ", with: "-").prefix(48)
-        var file = proposed.appending(path: "\(slug.isEmpty ? "action" : String(slug)).json")
+        let base = slug.isEmpty ? "action" : String(slug)
+        var file = folder.appending(path: "\(base).json")
         var n = 2
         while FileManager.default.fileExists(atPath: file.path) {
-            file = proposed.appending(path: "\(slug)-\(n).json")
+            file = folder.appending(path: "\(base)-\(n).json")
             n += 1
         }
         try Self.encoder.encode(action).write(to: file, options: .withoutOverwriting)
