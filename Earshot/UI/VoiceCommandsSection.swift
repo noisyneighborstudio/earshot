@@ -34,6 +34,12 @@ struct VoiceCommandsSection: View {
                 }
             }
 
+            if let deleted = commands.deleted {
+                Section {
+                    UndoBanner(title: deleted.name) { attempt { try commands.undoDelete() } }
+                }
+            }
+
             ForEach(groups, id: \.app) { group in
                 Section {
                     ForEach(group.entries) { entry in
@@ -81,6 +87,7 @@ struct VoiceCommandsSection: View {
             openRequested()
         }
         .onChange(of: commands.editRequest) { openRequested() }
+        .onDisappear { commands.clearDeleted() }
         .sheet(item: $editing) { entry in
             ActionEditor(entry: entry, commands: commands)
         }
@@ -238,6 +245,8 @@ private struct ActionEditor: View {
     @State private var pagesOnly: Bool
     @State private var steps: [StepLine]
     @State private var shortcuts: [String] = []
+    /// The chosen app's menus, if it's running: to pick from, and to flag steps it doesn't have.
+    @State private var menu: [MenuItem] = []
     @State private var error: String?
 
     struct PhraseLine: Identifiable {
@@ -323,6 +332,11 @@ private struct ActionEditor: View {
                             value($step)
                             remove { steps.removeAll { $0.id == step.id } }
                         }
+                        if step.kind == .menu, !menu.isEmpty, !step.value.isEmpty, !hasMenuItem(step.value) {
+                            Label("Not in \(Apps.name(app) ?? app)'s menus right now.", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
                     }
                     Button("Add Step") { steps.append(StepLine(kind: .keystroke, value: "")) }
                 } header: {
@@ -353,6 +367,7 @@ private struct ActionEditor: View {
         }
         .frame(width: 540, height: 600)
         .task { shortcuts = await Self.loadShortcuts() }
+        .task(id: app) { menu = Self.menu(of: app) }
     }
 
     @ViewBuilder
@@ -364,9 +379,23 @@ private struct ActionEditor: View {
             choices(Apps.installed.map(\.name), selection: step.value)
         case .shortcut where !shortcuts.isEmpty:
             choices(shortcuts, selection: step.value)
+        case .menu where !menu.isEmpty:
+            TextField("Value", text: step.value, prompt: Text(Self.prompt(.menu))).labelsHidden()
+            MenuPicker(items: menu) { step.wrappedValue.value = $0.display }
         default:
             TextField("Value", text: step.value, prompt: Text(Self.prompt(step.wrappedValue.kind))).labelsHidden()
         }
+    }
+
+    private func hasMenuItem(_ value: String) -> Bool {
+        let wanted = value.split(separator: "›").map { Phrase.normalize(String($0)) }
+        return menu.contains { $0.path.map(Phrase.normalize) == wanted }
+    }
+
+    private static func menu(of bundleID: String) -> [MenuItem] {
+        guard !bundleID.isEmpty,
+              let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else { return [] }
+        return CommandContext.capture(running).menu
     }
 
     /// A menu of names that keeps the current value even if it's not among them.
@@ -519,5 +548,33 @@ private struct KeyRecorder: View {
         let parts = [(flags.contains(.control), "ctrl"), (flags.contains(.option), "opt"),
                      (flags.contains(.shift), "shift"), (flags.contains(.command), "cmd")].filter(\.0).map(\.1)
         return (parts + [key]).joined(separator: "+")
+    }
+}
+
+/// The app's menus as a menu, to fill in a menu step.
+private struct MenuPicker: View {
+    let items: [MenuItem]
+    let pick: (MenuItem) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(Self.tops(items), id: \.self) { top in
+                Menu(top) {
+                    ForEach(items.filter { $0.path.first == top }, id: \.display) { item in
+                        Button(item.path.dropFirst().joined(separator: " › ")) { pick(item) }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "menubar.rectangle")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .accessibilityLabel(Text("Choose a menu item"))
+    }
+
+    private static func tops(_ items: [MenuItem]) -> [String] {
+        var seen = Set<String>()
+        return items.compactMap(\.path.first).filter { seen.insert($0).inserted }
     }
 }
