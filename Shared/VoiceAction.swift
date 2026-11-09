@@ -8,10 +8,45 @@ import Foundation
 ///       "when": { "app": "com.apple.Safari" }, "steps": [{ "keystroke": "cmd+d" }] }
 struct VoiceAction: Codable, Equatable, Sendable {
     var name: String
-    /// Example phrases. `{name}` captures a parameter, e.g. "search hacker news for {query}".
+    /// Phrases the user (or an agent) chose. `{name}` captures a parameter, e.g. "search hacker news for {query}".
     var say: [String]
+    /// Phrases Earshot learned from commands Claude resolved. Never edited automatically into `say`.
+    var learned: [String] = []
     var when: Scope?
     var steps: [Step]
+
+    init(name: String, say: [String], learned: [String] = [], when: Scope? = nil, steps: [Step]) {
+        self.name = name
+        self.say = say
+        self.learned = learned
+        self.when = when
+        self.steps = steps
+    }
+
+    private enum CodingKeys: String, CodingKey { case name, say, learned, when, steps }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        say = try container.decodeIfPresent([String].self, forKey: .say) ?? []
+        learned = try container.decodeIfPresent([String].self, forKey: .learned) ?? []
+        when = try container.decodeIfPresent(Scope.self, forKey: .when)
+        steps = try container.decode([Step].self, forKey: .steps)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(say, forKey: .say)
+        if !learned.isEmpty { try container.encode(learned, forKey: .learned) }
+        try container.encodeIfPresent(when, forKey: .when)
+        try container.encode(steps, forKey: .steps)
+    }
+
+    /// Everything that triggers it: chosen phrases first.
+    var phrases: [String] { say + learned }
+    /// Only learned phrases: Earshot made it, the user didn't.
+    var isLearned: Bool { say.isEmpty && !learned.isEmpty }
 
     struct Scope: Codable, Equatable, Sendable {
         /// Bundle identifier of the frontmost app, e.g. com.apple.Safari.
@@ -39,12 +74,12 @@ struct VoiceAction: Codable, Equatable, Sendable {
     func problems() -> [String] {
         var problems: [String] = []
         if name.trimmingCharacters(in: .whitespaces).isEmpty { problems.append("`name` is empty.") }
-        if say.isEmpty { problems.append("`say` needs at least one phrase.") }
+        if phrases.isEmpty { problems.append("`say` needs at least one phrase.") }
         if steps.isEmpty { problems.append("`steps` needs at least one step.") }
-        for phrase in say where Phrase(phrase).literal.isEmpty {
+        for phrase in phrases where Phrase(phrase).literal.isEmpty {
             problems.append("Phrase \"\(phrase)\" has no words to match.")
         }
-        let params = Set(say.flatMap { Phrase($0).parameters }).union(Self.contextPlaceholders)
+        let params = Set(phrases.flatMap { Phrase($0).parameters }).union(Self.contextPlaceholders)
         for case .openURL(let template) in steps {
             for placeholder in Phrase.placeholders(in: template) where !params.contains(placeholder) {
                 problems.append("{\(placeholder)} in \(template) isn't captured by any phrase.")
@@ -74,10 +109,10 @@ struct VoiceAction: Codable, Equatable, Sendable {
         return when?.app?.lowercased() == other.when?.app?.lowercased() && when?.url == other.when?.url
     }
 
-    /// The utterance's parameters if one of `say` matches it.
+    /// The utterance's parameters if one of its phrases matches it.
     func match(_ utterance: String) -> [String: String]? {
         let normalized = Phrase.normalize(utterance)
-        for phrase in say {
+        for phrase in phrases {
             if let params = Phrase(phrase).match(normalized) { return params }
         }
         return nil
@@ -231,6 +266,7 @@ struct ActionLibrary: Sendable {
     struct Entry: Identifiable, Sendable {
         let file: URL
         let action: VoiceAction
+        var modified: Date = .distantPast
         var id: URL { file }
     }
 
@@ -242,7 +278,8 @@ struct ActionLibrary: Sendable {
 
     func load(proposals: Bool = false) -> (actions: [Entry], invalid: [Invalid]) {
         let folder = proposals ? proposed : directory
-        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: [.contentModificationDateKey], options: .skipsHiddenFiles)) ?? []
         var actions: [Entry] = [], invalid: [Invalid] = []
         for file in files.filter({ $0.pathExtension == "json" }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             do {
@@ -250,7 +287,8 @@ struct ActionLibrary: Sendable {
                 if let problem = action.problems().first {
                     invalid.append(Invalid(file: file, problem: problem))
                 } else {
-                    actions.append(Entry(file: file, action: action))
+                    let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                    actions.append(Entry(file: file, action: action, modified: modified ?? .distantPast))
                 }
             } catch {
                 invalid.append(Invalid(file: file, problem: Self.describe(error)))
@@ -306,10 +344,10 @@ struct ActionLibrary: Sendable {
     /// Phrases of `action` that an approved action at the same scope already answers to.
     func collisions(_ action: VoiceAction, with approved: [Entry]) -> [String] {
         approved.filter { $0.action.overlaps(action) }.flatMap { existing in
-            action.say.filter { phrase in
+            action.phrases.filter { phrase in
                 let new = Phrase(phrase)
                 return existing.action.match(new.sample) != nil
-                    || existing.action.say.contains { new.match(Phrase($0).sample) != nil }
+                    || existing.action.phrases.contains { new.match(Phrase($0).sample) != nil }
             }.map { "\"\($0)\" (\(existing.action.name))" }
         }
     }
