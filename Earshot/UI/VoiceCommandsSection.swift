@@ -22,7 +22,7 @@ struct VoiceCommandsSection: View {
                 } header: {
                     Text("\(commands.proposals.count) to review")
                 } footer: {
-                    Text("Proposed by agents or “make an action …”. They don't run until approved.")
+                    Text("Proposed by connected agents. They don't run until approved.")
                 }
             }
 

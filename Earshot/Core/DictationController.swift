@@ -214,7 +214,8 @@ final class DictationController {
             case .done(let what, nil): show(what, kind: .done)
             case .done(let what, let learned?):
                 show(String(localized: "\(what) · Remembered “\(learned.phrase)”"), kind: .done, learned: learned, for: .seconds(6))
-            case .proposed(let message): show(message, kind: .done, for: .seconds(5))
+            case .added(let name, let learned):
+                show(String(localized: "Added “\(name)” · say “\(learned.phrase)”"), kind: .done, learned: learned, for: .seconds(8))
             case .noMatch(let message), .failed(let message): show(message, for: .seconds(5))
             }
         } catch {

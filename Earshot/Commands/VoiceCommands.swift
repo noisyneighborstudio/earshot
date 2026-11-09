@@ -10,7 +10,8 @@ final class VoiceCommands {
     enum Outcome: Equatable {
         /// What was done, and the phrase learned from it if Claude had to resolve it.
         case done(String, learned: Learned?)
-        case proposed(String)
+        /// An action made by voice: the user asked for it, so it's added right away, with Undo.
+        case added(name: String, learned: Learned)
         case noMatch(String)
         case failed(String)
     }
@@ -240,9 +241,9 @@ final class VoiceCommands {
                 model: "claude-sonnet-5-5", effort: "low", system: Self.draftingPrompt,
                 input: Self.draftingInput(request, context: context), timeout: .seconds(90))
             let action = try Self.decodeDraft(reply)
-            try library.propose(action)
+            let file = try library.add(action)
             reload()
-            return .proposed(String(localized: "“\(action.name)” is ready to review in Settings › Voice Commands."))
+            return .added(name: action.name, learned: Learned(phrase: action.say[0], target: action.name, file: file, previous: nil))
         } catch {
             log.error("drafting an action failed: \(error.localizedDescription)")
             return .failed(error.localizedDescription)

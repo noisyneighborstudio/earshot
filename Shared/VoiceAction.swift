@@ -1,7 +1,7 @@
 import Foundation
 
 /// A voice command: phrases that trigger it, where it applies, and the steps it runs. One JSON file
-/// per action in Earshot/Actions; agents and "make an action" write to Actions/Proposed until the
+/// per action in Earshot/Actions; "make an action" adds one directly, agents write to Actions/Proposed until the
 /// user approves them in Settings.
 ///
 ///     { "name": "Bookmark page", "say": ["save this", "bookmark this"],
