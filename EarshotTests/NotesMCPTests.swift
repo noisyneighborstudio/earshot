@@ -375,7 +375,8 @@ struct NotesMCPEndToEndTests {
         send("tools/list", "{}")
         let tools = try #require(try await result()["tools"] as? [[String: Any]])
         #expect(Set(tools.compactMap { $0["name"] as? String })
-            == ["search_notes", "list_meetings", "get_meeting", "list_action_items", "search_dictations"])
+            == ["search_notes", "list_meetings", "get_meeting", "list_action_items", "search_dictations",
+                "list_actions", "propose_action"])
 
         send("tools/call", #"{"name":"search_notes","arguments":{"query":"tiers","mode":"lexical"}}"#)
         let search = try await result()
@@ -390,6 +391,19 @@ struct NotesMCPEndToEndTests {
         send("resources/read", #"{"uri":"earshot://meeting/\#(m.id.uuidString)"}"#)
         let contents = try #require(try await result()["contents"] as? [[String: Any]])
         #expect((contents.first?["text"] as? String)?.contains("ship it friday") == true)
+
+        send("tools/call", #"{"name":"propose_action","arguments":{"name":"Search HN","say":["search hacker news for {query}"],"steps":[{"open_url":"https://hn.algolia.com/?q={query}"}]}}"#)
+        let proposed = try await result()
+        #expect(proposed["isError"] as? Bool == false, "\(proposed)")
+        #expect(ActionLibrary(directory: fixture.root.appending(path: "Actions")).load(proposals: true).actions.map(\.action.name) == ["Search HN"])
+
+        send("tools/call", #"{"name":"propose_action","arguments":{"name":"Bad","say":["x"],"steps":[{"keystroke":"cmd+nope"}]}}"#)
+        let rejected = try await result()
+        #expect(rejected["isError"] as? Bool == true)
+        #expect(try toolText(rejected).contains("Keystroke"))
+
+        send("tools/call", #"{"name":"list_actions","arguments":{}}"#)
+        #expect(try toolText(try await result()).contains("Search HN"))
 
         send("prompts/get", #"{"name":"meeting_brief","arguments":{"person":"Dana"}}"#)
         let messages = try #require(try await result()["messages"] as? [[String: Any]])

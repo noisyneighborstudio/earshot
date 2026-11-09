@@ -7,6 +7,8 @@ enum HotkeyEvent: Sendable {
     case release(at: ContinuousClock.Instant)
     /// Another key was pressed while the hotkey was held (e.g. fn+arrow), so it isn't dictation.
     case chord
+    /// ⌃ joined the held hotkey: a voice command, not dictation.
+    case command
     case escape
 }
 
@@ -25,6 +27,7 @@ final class HotkeyMonitor: @unchecked Sendable {
     // Touched only on the tap thread.
     private var tap: CFMachPort?
     private var held = false
+    private var commandSent = false
 
     init(hotkey: Hotkey, onEvent: @escaping @Sendable (HotkeyEvent) -> Void) {
         shared = OSAllocatedUnfairLock(initialState: Shared(hotkey: hotkey))
@@ -92,11 +95,18 @@ final class HotkeyMonitor: @unchecked Sendable {
 
         case .flagsChanged:
             let hotkey = self.hotkey
-            guard event.getIntegerValueField(.keyboardEventKeycode) == hotkey.keyCode else { return pass }
-            let down = event.flags.rawValue & hotkey.deviceFlag != 0
-            guard down != held else { return pass }
-            held = down
-            onEvent(down ? .press(at: .now) : .release(at: .now))
+            if event.getIntegerValueField(.keyboardEventKeycode) == hotkey.keyCode {
+                let down = event.flags.rawValue & hotkey.deviceFlag != 0
+                guard down != held else { return pass }
+                held = down
+                commandSent = false
+                onEvent(down ? .press(at: .now) : .release(at: .now))
+            }
+            // ⌃ before or after the hotkey, either order.
+            if held, !commandSent, event.flags.contains(.maskControl) {
+                commandSent = true
+                onEvent(.command)
+            }
 
         case .keyDown:
             if event.getIntegerValueField(.keyboardEventKeycode) == 53, swallowEscape {

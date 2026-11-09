@@ -1,8 +1,9 @@
 import Foundation
 import MCP
 
-// earshot-mcp: a read-only stdio MCP server over NN Earshot's meetings, notes, and dictations.
-// `--data-dir <dir>` (tests only) reads <dir>/Meetings and <dir>/history.json instead of the app's.
+// earshot-mcp: a stdio MCP server over NN Earshot's meetings, notes, and dictations (read-only), and its
+// voice commands (agents may propose new ones; the user approves them in the app).
+// `--data-dir <dir>` (tests only) uses <dir>/Meetings, <dir>/history.json and <dir>/Actions instead of the app's.
 var arguments = Array(CommandLine.arguments.dropFirst())
 var directory = EarshotData.directory
 if arguments.first == "--data-dir", arguments.count == 2 {
@@ -22,7 +23,8 @@ let server = Server(
                         tools: .init(listChanged: false)))
 
 await server.withMethodHandler(ListTools.self) { _ in .init(tools: NotesTools.all) }
-await server.withMethodHandler(CallTool.self) { await NotesTools.call($0, library: library) }
+let actions = ActionLibrary(directory: directory.appending(path: "Actions"))
+await server.withMethodHandler(CallTool.self) { await NotesTools.call($0, library: library, actions: actions) }
 await server.withMethodHandler(ListResources.self) { try await NotesTools.resources(cursor: $0.cursor, library: library) }
 await server.withMethodHandler(ListResourceTemplates.self) { _ in .init(templates: [NotesTools.template]) }
 await server.withMethodHandler(ReadResource.self) { try await NotesTools.read($0.uri, library: library) }

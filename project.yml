@@ -12,11 +12,16 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     ENABLE_HARDENED_RUNTIME: YES
+    # The app's name. Debug builds are "NN Earshot Dev" (and studio.noisyneighbor.earshot.dev), so
+    # System Settings' privacy lists tell them apart from the installed release.
+    EARSHOT_APP_NAME: NN Earshot
     SWIFT_EMIT_LOC_STRINGS: YES
     LOCALIZATION_PREFERS_STRING_CATALOGS: YES
   configs:
     # Only Release builds check for updates. The feed is R2 bucket `earshot-releases` (scripts/publish-appcast.sh);
     # the key is login-keychain account `earshot` (generate_keys --account earshot -p).
+    Debug:
+      EARSHOT_APP_NAME: NN Earshot Dev
     Release:
       EARSHOT_FEED_URL: https://earshot-updates.noisyneighbor.studio/appcast.xml
       EARSHOT_ED_PUBLIC_KEY: I6mvrZnbVwAeSfz9qyWdDw7EeuujnT7sUuly59RPeik=
@@ -66,17 +71,15 @@ targets:
         com.apple.security.device.audio-input: true
     settings:
       base:
-        PRODUCT_NAME: NN Earshot
+        PRODUCT_NAME: $(EARSHOT_APP_NAME)
         PRODUCT_MODULE_NAME: Earshot
         PRODUCT_BUNDLE_IDENTIFIER: studio.noisyneighbor.earshot
-        EARSHOT_APP_NAME: NN Earshot
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       # Its own identity, so dev builds keep separate privacy grants (TCC pins them to the
       # signing certificate) and settings from the installed release.
       configs:
         Debug:
           PRODUCT_BUNDLE_IDENTIFIER: studio.noisyneighbor.earshot.dev
-          EARSHOT_APP_NAME: NN Earshot Dev
     postBuildScripts:
       # Before code signing, so the app's signature covers it.
       - name: Claude Desktop extension
@@ -115,6 +118,6 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: studio.noisyneighbor.earshot.tests
-        # The app's product name ("NN Earshot") differs from its target name.
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/NN Earshot.app/Contents/MacOS/NN Earshot"
+        # The app's product name differs from its target name.
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/$(EARSHOT_APP_NAME).app/Contents/MacOS/$(EARSHOT_APP_NAME)"
         BUNDLE_LOADER: "$(TEST_HOST)"

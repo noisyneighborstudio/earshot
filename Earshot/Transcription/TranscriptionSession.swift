@@ -1,4 +1,5 @@
 import AVFoundation
+import os
 import Speech
 
 /// A finalized stretch of speech; times are seconds from the session's first audio.
@@ -31,6 +32,7 @@ final class TranscriptionSession: Sendable {
     private let input: AsyncStream<AnalyzerInput>.Continuation
     private let starter: Task<Void, Error>
     private let collector: Task<Transcript, Error>
+    private let contextualStrings: [String]
 
     /// `onTranscript` gets each running update; `onSegment` each finalized segment.
     init(
@@ -44,6 +46,7 @@ final class TranscriptionSession: Sendable {
         self.format = format
         self.analyzer = analyzer
         self.input = input
+        self.contextualStrings = contextualStrings
 
         starter = Task {
             if !contextualStrings.isEmpty {
@@ -74,6 +77,23 @@ final class TranscriptionSession: Sendable {
                 }
             }
             return Transcript(text: finals.trimmingCharacters(in: .whitespacesAndNewlines), segments: segments)
+        }
+    }
+
+    /// Words to expect from here on, beside the dictionary: app names once it's a voice command.
+    /// Applied after the initial context, so it can't be overwritten by it.
+    func expect(_ strings: [String]) {
+        let analyzer = analyzer, starter = starter, all = contextualStrings + strings
+        Task {
+            do {
+                try await starter.value
+                let context = AnalysisContext()
+                context.contextualStrings[.general] = all
+                try await analyzer.setContext(context)
+            } catch {
+                Logger(subsystem: "studio.noisyneighbor.earshot", category: "speech")
+                    .error("couldn't add command vocabulary: \(error.localizedDescription)")
+            }
         }
     }
 

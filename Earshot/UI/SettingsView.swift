@@ -4,8 +4,23 @@ struct SettingsView: View {
     @Bindable var settings: AppSettings
     let speech: SpeechEngine
     let updater: Updater
+    let commands: VoiceCommands
 
     var body: some View {
+        TabView {
+            Tab("General", systemImage: "gearshape") { general }
+            Tab("Dictionary", systemImage: "character.book.closed") { dictionary }
+            Tab("Voice Commands", systemImage: "command") {
+                Form { VoiceCommandsSection(commands: commands, hotkey: settings.hotkey) }.formStyle(.grouped)
+            }
+            Tab("Agents", systemImage: "point.3.connected.trianglepath.dotted") {
+                Form { AgentsSection() }.formStyle(.grouped)
+            }
+        }
+        .frame(width: 540, height: 560)
+    }
+
+    private var general: some View {
         Form {
             Section {
                 Picker("Hotkey", selection: $settings.hotkey) {
@@ -21,7 +36,7 @@ struct SettingsView: View {
             } header: {
                 Text("Dictation")
             } footer: {
-                Text(verbatim: speech.statusDescription + "\n" + String(localized: "Dictation runs entirely on this Mac."))
+                Text(verbatim: speech.statusDescription + "\n" + String(localized: "Dictation runs entirely on this Mac. If pressing fn opens the emoji picker or starts macOS dictation, set System Settings › Keyboard › “Press 🌐 key to” to “Do Nothing”."))
             }
 
             Section {
@@ -34,18 +49,6 @@ struct SettingsView: View {
                 Text("Earshot detects calls in Zoom, Teams, FaceTime, Slack, Google Meet and others. Your mic and the call audio are transcribed on this Mac; Claude writes the notes. Recording laws vary — tell participants you're taking notes.")
             }
 
-            Section {
-                TextEditor(text: $settings.dictionaryText)
-                    .font(.body.monospaced())
-                    .frame(minHeight: 120)
-            } header: {
-                Text("Dictionary")
-            } footer: {
-                Text("One word or phrase per line: names, jargon, product terms. Used for recognition and spelling.")
-            }
-
-            AgentsSection()
-
             if updater.isEnabled {
                 Section {
                     LabeledContent("Version") {
@@ -56,15 +59,21 @@ struct SettingsView: View {
                     Text("Updates")
                 }
             }
+        }
+        .formStyle(.grouped)
+    }
 
+    private var dictionary: some View {
+        Form {
             Section {
-                Text("If pressing fn opens the emoji picker or starts macOS dictation, set System Settings › Keyboard › “Press 🌐 key to” to “Do Nothing”.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                TextEditor(text: $settings.dictionaryText)
+                    .font(.body.monospaced())
+                    .frame(minHeight: 360)
+            } footer: {
+                Text("One word or phrase per line: names, jargon, product terms. Used for recognition and spelling.")
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480)
     }
 
     /// Keeps the current selection visible even before the supported list has loaded.
