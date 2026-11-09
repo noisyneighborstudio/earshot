@@ -25,6 +25,7 @@ final class DictationController {
     private(set) var partial = ""
     /// This press is a voice command (hotkey + ⌃), not dictation.
     private(set) var isCommand = false
+    var askingClaude: Bool { commands.askingClaude }
     private(set) var notice: Notice? { didSet { stateChanged() } }
 
     @ObservationIgnored var onOverlayVisibilityChange: ((Bool) -> Void)?
@@ -100,7 +101,9 @@ final class DictationController {
 
     private func enterCommandMode() {
         guard session != nil, session?.command == nil else { return }
-        session?.command = CommandContext.capture()
+        let context = CommandContext.capture()
+        session?.command = context
+        session?.transcription.expect(commands.vocabulary(for: context))
         isCommand = true
     }
 

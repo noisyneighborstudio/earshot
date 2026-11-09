@@ -168,3 +168,33 @@ struct MakeActionTests {
         #expect(throws: ActionError.self) { try VoiceCommands.decodeDraft("Sorry, I can't.") }
     }
 }
+
+struct ClaudeRouterTests {
+    private let iterm = URL(filePath: "/Applications/iTerm.app")
+
+    @Test func mapsTheChosenLineToItsCommand() throws {
+        let search = try action(#"{"name":"HN","say":["hn {query}"],"steps":[{"open_url":"https://x/{query}"}]}"#)
+        let save = MenuItem(path: ["File", "Save"], enabled: true)
+        let candidates: [ClaudeRouter.Candidate] = [.action(search), .menu(save), .app(name: "iTerm", url: iterm)]
+
+        #expect(ClaudeRouter.match(try ClaudeRouter.decode(#"{"command": "Open app: iTerm", "parameters": []}"#), candidates: candidates)
+            == .openApp(name: "iTerm", url: iterm))
+        #expect(ClaudeRouter.match(.init(command: "Menu: File › Save", parameters: nil), candidates: candidates) == .menu(save))
+        #expect(ClaudeRouter.match(.init(command: "Action: HN (says: hn {query})", parameters: ["swift"]), candidates: candidates)
+            == .action(search, parameters: ["query": "swift"]))
+        #expect(ClaudeRouter.match(.init(command: "Action: HN (says: hn {query})", parameters: []), candidates: candidates) == nil,
+                "missing parameter")
+        #expect(ClaudeRouter.match(try ClaudeRouter.decode(#"{"command": null}"#), candidates: candidates) == nil)
+        #expect(ClaudeRouter.match(.init(command: "Open app: Terminal", parameters: []), candidates: candidates) == nil, "not on the list")
+    }
+
+    @Test func readsAFencedReplyAndRejectsProse() throws {
+        #expect(try ClaudeRouter.decode("```json\n{\"command\": \"Menu: File › Save\"}\n```").command == "Menu: File › Save")
+        #expect(throws: ActionError.self) { try ClaudeRouter.decode("I think you mean iTerm.") }
+    }
+
+    @Test func listsCandidatesWithTheUtterance() {
+        let text = ClaudeRouter.input("Open High Term", candidates: [.app(name: "iTerm", url: iterm)], appName: "Finder")
+        #expect(text == "Frontmost app: Finder\nCommands:\n- Open app: iTerm\n\nThe user said: \"Open High Term\"")
+    }
+}

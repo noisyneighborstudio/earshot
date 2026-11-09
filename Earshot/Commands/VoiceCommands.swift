@@ -2,7 +2,7 @@ import AppKit
 import os
 
 /// Runs what the user says in command mode (dictation key + ⌃): exact matches first
-/// (`CommandMatcher`), then the on-device model, never a guess. "Make an action …" has Claude
+/// (`CommandMatcher`), then Claude choosing from what's available, never a guess. "Make an action …" has Claude
 /// draft a new action, which waits in Settings until the user approves it.
 @MainActor
 @Observable
@@ -17,8 +17,8 @@ final class VoiceCommands {
     private(set) var actions: [ActionLibrary.Entry] = []
     private(set) var proposals: [ActionLibrary.Entry] = []
     private(set) var invalid: [ActionLibrary.Invalid] = []
-    /// While "make an action" waits on Claude.
-    private(set) var drafting = false
+    /// While Claude drafts an action or picks a command.
+    private(set) var askingClaude = false
 
     @ObservationIgnored let library: ActionLibrary
     @ObservationIgnored private let log = Logger(subsystem: "studio.noisyneighbor.earshot", category: "commands")
@@ -55,17 +55,31 @@ final class VoiceCommands {
 
     // MARK: Running
 
+    /// Words the recognizer should expect in command mode: app names, action phrases, menu titles.
+    func vocabulary(for context: CommandContext) -> [String] {
+        var words = CommandMatcher.installedApps().values.map { $0.deletingPathExtension().lastPathComponent }
+        words += actions.flatMap { $0.action.say.map { Phrase($0).literal } }
+        words += context.menu.filter(\.enabled).map(\.title)
+        var seen = Set<String>()
+        return words.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
     func run(_ utterance: String, in context: CommandContext) async -> Outcome {
         if let request = Self.actionRequest(utterance) { return await draft(request, context: context) }
         reload()
         let actions = actions.map(\.action)
-        let matcher = CommandMatcher(actions: actions, menu: context.menu, apps: CommandMatcher.installedApps(),
-                                     bundleID: context.bundleID, url: context.url)
+        let apps = CommandMatcher.installedApps()
+        let matcher = CommandMatcher(actions: actions, menu: context.menu, apps: apps, bundleID: context.bundleID, url: context.url)
         do {
             var match = matcher.match(utterance)
-            if match == nil, SemanticRouter.isAvailable {
-                let applicable = actions.filter { $0.applies(app: context.bundleID, url: context.url) }
-                match = try await SemanticRouter.route(utterance, actions: applicable, menu: context.menu, appName: context.appName)
+            if match == nil, let cli = ClaudeCLI.locate() {
+                let candidates = actions.filter { $0.applies(app: context.bundleID, url: context.url) }.map(ClaudeRouter.Candidate.action)
+                    + context.menu.filter(\.enabled).map(ClaudeRouter.Candidate.menu)
+                    + apps.values.sorted { $0.lastPathComponent < $1.lastPathComponent }
+                        .map { ClaudeRouter.Candidate.app(name: $0.deletingPathExtension().lastPathComponent, url: $0) }
+                askingClaude = true
+                defer { askingClaude = false }
+                match = try await ClaudeRouter.route(utterance, candidates: candidates, appName: context.appName, cli: cli)
             }
             guard let match else {
                 return .noMatch(String(localized: "No command for “\(utterance)” in \(context.appName). Say “make an action …” to add one."))
@@ -85,7 +99,7 @@ final class VoiceCommands {
             return item.display
         case .openApp(_, let url):
             try await NSWorkspace.shared.openApplication(at: url, configuration: .init())
-            return String(localized: "Opened \(FileManager.default.displayName(atPath: url.path))")
+            return String(localized: "Opened \(url.deletingPathExtension().lastPathComponent)")
         case .openURL(let url):
             try open(url)
             return String(localized: "Opened \(url.host() ?? url.absoluteString)")
@@ -150,8 +164,8 @@ final class VoiceCommands {
             return .failed(String(localized: "Say what the action should do, e.g. “make an action: when I say standup, open Zoom”."))
         }
         guard let cli = ClaudeCLI.locate() else { return .failed(ClaudeCLIError.notFound.localizedDescription) }
-        drafting = true
-        defer { drafting = false }
+        askingClaude = true
+        defer { askingClaude = false }
         do {
             let reply = try await cli.run(
                 model: "claude-sonnet-5-5", effort: "low", system: Self.draftingPrompt,

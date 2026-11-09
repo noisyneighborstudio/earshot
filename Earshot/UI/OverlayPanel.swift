@@ -122,7 +122,7 @@ struct OverlayView: View {
             }
         case .processing:
             ProgressView().controlSize(.small).tint(.white)
-            Text(controller.isCommand ? "Working…" : "Writing…").foregroundStyle(.white.opacity(0.82))
+            Text(controller.askingClaude ? "Asking Claude…" : controller.isCommand ? "Working…" : "Writing…").foregroundStyle(.white.opacity(0.82))
         case .idle:
             if let notice = controller.notice {
                 Image(systemName: Self.symbol(notice.kind))
