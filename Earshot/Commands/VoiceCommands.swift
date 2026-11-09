@@ -12,6 +12,8 @@ final class VoiceCommands {
         case done(String, learned: Learned?)
         /// An action made by voice: the user asked for it, so it's added right away, with Undo.
         case added(name: String, learned: Learned)
+        /// Claude wasn't sure; the user picks by clicking or by saying the option.
+        case question(ClaudeRouter.Question)
         case noMatch(String)
         case failed(String)
     }
@@ -21,6 +23,10 @@ final class VoiceCommands {
     private(set) var invalid: [ActionLibrary.Invalid] = []
     /// While Claude drafts an action or picks a command.
     private(set) var askingClaude = false
+    /// Claude's open question, with what was said and the window it applies to.
+    @ObservationIgnored private var pending: (question: ClaudeRouter.Question, utterance: String, context: CommandContext, asked: ContinuousClock.Instant)?
+    /// As long as the overlay shows the question.
+    static let questionLifetime: Duration = .seconds(20)
 
     /// What Claude resolved, saved as an exact phrase so next time needs no Claude. Undoable.
     struct Learned: Equatable {
@@ -82,28 +88,69 @@ final class VoiceCommands {
     }
 
     func run(_ utterance: String, in context: CommandContext) async -> Outcome {
+        if let pending, pending.asked.duration(to: .now) < Self.questionLifetime,
+           let index = Self.answer(utterance, to: pending.question) { return await answer(index) }
+        pending = nil
         if let request = Self.actionRequest(utterance) { return await draft(request, context: context) }
         reload()
         let actions = actions.map(\.action)
         let apps = CommandMatcher.installedApps()
         let matcher = CommandMatcher(actions: actions, menu: context.menu, apps: apps, bundleID: context.bundleID, url: context.url)
+        if let match = matcher.match(utterance) { return await perform(match, utterance: utterance, learning: false, context: context) }
+        guard let cli = ClaudeCLI.locate() else {
+            return .noMatch(String(localized: "No command for “\(utterance)” in \(context.appName). Say “make an action …” to add one."))
+        }
+        let candidates = actions.filter { $0.applies(app: context.bundleID, url: context.url) }.map(ClaudeRouter.Candidate.action)
+            + context.menu.filter(\.enabled).map(ClaudeRouter.Candidate.menu)
+            + apps.values.sorted { $0.lastPathComponent < $1.lastPathComponent }
+                .map { ClaudeRouter.Candidate.app(name: $0.deletingPathExtension().lastPathComponent, url: $0) }
+        askingClaude = true
+        let route: ClaudeRouter.Route?
         do {
-            var match = matcher.match(utterance)
-            let viaClaude = match == nil
-            if match == nil, let cli = ClaudeCLI.locate() {
-                let candidates = actions.filter { $0.applies(app: context.bundleID, url: context.url) }.map(ClaudeRouter.Candidate.action)
-                    + context.menu.filter(\.enabled).map(ClaudeRouter.Candidate.menu)
-                    + apps.values.sorted { $0.lastPathComponent < $1.lastPathComponent }
-                        .map { ClaudeRouter.Candidate.app(name: $0.deletingPathExtension().lastPathComponent, url: $0) }
-                askingClaude = true
-                defer { askingClaude = false }
-                match = try await ClaudeRouter.route(utterance, candidates: candidates, appName: context.appName, cli: cli)
-            }
-            guard let match else {
-                return .noMatch(String(localized: "No command for “\(utterance)” in \(context.appName). Say “make an action …” to add one."))
-            }
+            route = try await ClaudeRouter.route(utterance, candidates: candidates, appName: context.appName, cli: cli)
+            askingClaude = false
+        } catch {
+            askingClaude = false
+            log.error("command failed: \(error.localizedDescription)")
+            return .failed(error.localizedDescription)
+        }
+        switch route {
+        case .match(let match): return await perform(match, utterance: utterance, learning: true, context: context)
+        case .ask(let question):
+            pending = (question, utterance, context, .now)
+            return .question(question)
+        case nil:
+            return .noMatch(String(localized: "No command for “\(utterance)” in \(context.appName). Say “make an action …” to add one."))
+        }
+    }
+
+    /// Runs the option picked for Claude's question, and remembers the original words for it.
+    func answer(_ index: Int) async -> Outcome {
+        guard let pending, pending.asked.duration(to: .now) < Self.questionLifetime + .seconds(1),
+              pending.question.options.indices.contains(index) else { return .failed(String(localized: "That question has expired.")) }
+        self.pending = nil
+        return await perform(pending.question.options[index].match, utterance: pending.utterance, learning: true, context: pending.context)
+    }
+
+    /// Which option a spoken answer names: "the beta one", "nightly", "second", "two".
+    nonisolated static func answer(_ utterance: String, to question: ClaudeRouter.Question) -> Int? {
+        let words = Set(Phrase.normalize(utterance).split(separator: " ").map(String.init))
+        let ordinals = [["first", "one", "1"], ["second", "two", "2"], ["third", "three", "3"], ["fourth", "four", "4"]]
+        let byOrdinal = ordinals.prefix(question.options.count).indices.filter { !words.isDisjoint(with: ordinals[$0]) }
+        if byOrdinal.count == 1 { return byOrdinal[0] }
+        // Words that tell this option apart from the others.
+        let labels = question.options.map { Set(Phrase.normalize($0.label).split(separator: " ").map(String.init)) }
+        let hits = labels.indices.filter { i in
+            let distinct = labels[i].subtracting(labels.indices.filter { $0 != i }.reduce(into: Set<String>()) { $0.formUnion(labels[$1]) })
+            return !distinct.isDisjoint(with: words)
+        }
+        return hits.count == 1 ? hits[0] : nil
+    }
+
+    private func perform(_ match: CommandMatch, utterance: String, learning: Bool, context: CommandContext) async -> Outcome {
+        do {
             let done = try await perform(match, context: context)
-            guard viaClaude else { return .done(done, learned: nil) }
+            guard learning else { return .done(done, learned: nil) }
             do {
                 return .done(done, learned: try learn(utterance, as: match, context: context))
             } catch {

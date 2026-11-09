@@ -254,3 +254,33 @@ struct LearningTests {
         #expect(try commands.learn("example", as: .openURL(URL(string: "https://example.com")!), context: CommandContext()) == nil)
     }
 }
+
+@MainActor
+@Suite struct FollowUpTests {
+    let beta = URL(filePath: "/Applications/T3 Code (Beta).app"), nightly = URL(filePath: "/Applications/T3 Code (Nightly).app")
+    var candidates: [ClaudeRouter.Candidate] { [.app(name: "T3 Code (Beta)", url: beta), .app(name: "T3 Code (Nightly)", url: nightly)] }
+
+    @Test func claudeCanAsk() throws {
+        let choice = try ClaudeRouter.decode(#"{"question": "Which T3 Code?", "options": ["Open app: T3 Code (Beta)", "Open app: T3 Code (Nightly)"], "parameters": []}"#)
+        #expect(ClaudeRouter.match(choice, candidates: candidates) == nil)
+        let question = try #require(ClaudeRouter.question(choice, candidates: candidates))
+        #expect(question.text == "Which T3 Code?")
+        #expect(question.options.map(\.label) == ["T3 Code (Beta)", "T3 Code (Nightly)"])
+        #expect(question.options[1].match == .openApp(name: "T3 Code (Nightly)", url: nightly))
+    }
+
+    @Test func questionNeedsTwoOptionsOnTheList() throws {
+        let choice = try ClaudeRouter.decode(#"{"question": "Which?", "options": ["Open app: T3 Code (Beta)", "Open app: Zed"]}"#)
+        #expect(ClaudeRouter.question(choice, candidates: candidates) == nil)
+    }
+
+    @Test func spokenAnswers() throws {
+        let choice = try ClaudeRouter.decode(#"{"question": "Which?", "options": ["Open app: T3 Code (Beta)", "Open app: T3 Code (Nightly)"]}"#)
+        let question = try #require(ClaudeRouter.question(choice, candidates: candidates))
+        #expect(VoiceCommands.answer("the beta one", to: question) == 0)
+        #expect(VoiceCommands.answer("Nightly.", to: question) == 1)
+        #expect(VoiceCommands.answer("second", to: question) == 1)
+        #expect(VoiceCommands.answer("T3 code", to: question) == nil, "doesn't tell them apart")
+        #expect(VoiceCommands.answer("open safari", to: question) == nil)
+    }
+}

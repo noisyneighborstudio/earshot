@@ -9,11 +9,13 @@ import os
 @Observable
 final class DictationController {
     struct Notice: Equatable {
-        enum Kind { case clipboard, error, done }
+        enum Kind { case clipboard, error, done, question }
         let text: String
         let kind: Kind
         /// A phrase just learned: the toast offers Undo.
         var learned: VoiceCommands.Learned?
+        /// Claude's follow-up question: a button per option.
+        var options: [String] = []
     }
 
     enum Phase: Equatable {
@@ -210,18 +212,40 @@ final class DictationController {
             let outcome = await commands.run(text, in: context)
             guard current == generation else { return }
             phase = .idle
-            switch outcome {
-            case .done(let what, nil): show(what, kind: .done)
-            case .done(let what, let learned?):
-                show(String(localized: "\(what) · Remembered “\(learned.phrase)”"), kind: .done, learned: learned, for: .seconds(6))
-            case .added(let name, let learned):
-                show(String(localized: "Added “\(name)” · say “\(learned.phrase)”"), kind: .done, learned: learned, for: .seconds(8))
-            case .noMatch(let message), .failed(let message): show(message, for: .seconds(5))
-            }
+            present(outcome)
         } catch {
             guard current == generation, !Task.isCancelled else { return }
             phase = .idle
             show(error.localizedDescription)
+        }
+    }
+
+    private func present(_ outcome: VoiceCommands.Outcome) {
+        switch outcome {
+        case .done(let what, nil): show(what, kind: .done)
+        case .done(let what, let learned?):
+            show(String(localized: "\(what) · Remembered “\(learned.phrase)”"), kind: .done, learned: learned, for: .seconds(6))
+        case .added(let name, let learned):
+            show(String(localized: "Added “\(name)” · say “\(learned.phrase)”"), kind: .done, learned: learned, for: .seconds(8))
+        case .question(let question):
+            show(question.text, kind: .question, options: question.options.map(\.label), for: VoiceCommands.questionLifetime)
+        case .noMatch(let message), .failed(let message): show(message, for: .seconds(5))
+        }
+    }
+
+    /// A click on one of the question's options. Spoken answers go through `runCommand`.
+    func choose(_ index: Int) {
+        guard phase == .idle else { return }
+        generation += 1
+        let current = generation
+        notice = nil
+        isCommand = true
+        phase = .processing
+        work = Task {
+            let outcome = await commands.answer(index)
+            guard current == generation else { return }
+            phase = .idle
+            present(outcome)
         }
     }
 
@@ -251,10 +275,10 @@ final class DictationController {
     // MARK: - Feedback
 
     private func show(_ message: String, kind: Notice.Kind = .error, learned: VoiceCommands.Learned? = nil,
-                      for duration: Duration = .seconds(3)) {
+                      options: [String] = [], for duration: Duration = .seconds(3)) {
         noticeGeneration += 1
         let current = noticeGeneration
-        notice = Notice(text: message, kind: kind, learned: learned)
+        notice = Notice(text: message, kind: kind, learned: learned, options: options)
         Task {
             try? await Task.sleep(for: duration)
             if noticeGeneration == current { notice = nil }
@@ -268,7 +292,7 @@ final class DictationController {
 
     private func stateChanged() {
         onOverlayVisibilityChange?(phase != .idle || notice != nil)
-        onOverlayInteractiveChange?(phase == .idle && notice?.learned != nil)
+        onOverlayInteractiveChange?(phase == .idle && (notice?.learned != nil || notice?.options.isEmpty == false))
         onActiveChange?(phase != .idle)
     }
 }

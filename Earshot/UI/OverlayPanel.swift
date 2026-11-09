@@ -74,6 +74,7 @@ struct OverlayView: View {
         case .clipboard: "doc.on.clipboard"
         case .error: "exclamationmark.circle"
         case .done: "checkmark.circle.fill"
+        case .question: "questionmark.circle.fill"
         }
     }
 
@@ -81,7 +82,7 @@ struct OverlayView: View {
         switch kind {
         case .clipboard: .orange
         case .error: Color(red: 1, green: 0.41, blue: 0.38)
-        case .done: command
+        case .done, .question: command
         }
     }
 
@@ -136,14 +137,24 @@ struct OverlayView: View {
                     .foregroundStyle(Self.tint(notice.kind))
                 Text(verbatim: notice.text).lineLimit(2)
                 if notice.learned != nil {
-                    Button("Undo") { controller.forgetLearned() }
-                        .buttonStyle(.plain)
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .frame(height: 26)
-                        .background(.white.opacity(0.16), in: Capsule())
+                    Button("Undo") { controller.forgetLearned() }.buttonStyle(PillButton())
+                }
+                ForEach(Array(notice.options.enumerated()), id: \.offset) { index, option in
+                    Button { controller.choose(index) } label: { Text(verbatim: option).lineLimit(1) }
+                        .buttonStyle(PillButton())
                 }
             }
         }
+    }
+}
+
+/// A small capsule button on the overlay: Undo, or an answer to Claude's question.
+private struct PillButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(.white.opacity(configuration.isPressed ? 0.28 : 0.16), in: Capsule())
     }
 }
