@@ -28,6 +28,11 @@ struct CommandContext {
 
     static func capture() -> CommandContext {
         guard let app = NSWorkspace.shared.frontmostApplication else { return CommandContext() }
+        return capture(app)
+    }
+
+    /// Any running app's, e.g. to check an action's menu steps in Settings.
+    static func capture(_ app: NSRunningApplication) -> CommandContext {
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(axApp, 0.25)
         var context = CommandContext(appName: app.localizedName ?? "", bundleID: app.bundleIdentifier ?? "")

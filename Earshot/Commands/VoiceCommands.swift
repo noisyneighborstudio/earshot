@@ -84,10 +84,24 @@ final class VoiceCommands {
         reload()
     }
 
+    /// The last action deleted in Settings, for Undo.
+    private(set) var deleted: (name: String, file: URL, data: Data)?
+
     func remove(_ entry: ActionLibrary.Entry) throws {
+        let data = try Data(contentsOf: entry.file)
         try FileManager.default.trashItem(at: entry.file, resultingItemURL: nil)
+        deleted = (entry.action.name, entry.file, data)
         reload()
     }
+
+    func undoDelete() throws {
+        guard let deleted else { return }
+        try deleted.data.write(to: deleted.file, options: .withoutOverwriting)
+        self.deleted = nil
+        reload()
+    }
+
+    func clearDeleted() { deleted = nil }
 
     /// An edited action or proposal, in place.
     func save(_ action: VoiceAction, to entry: ActionLibrary.Entry) throws {
@@ -268,6 +282,9 @@ final class VoiceCommands {
             target = url.deletingPathExtension().lastPathComponent
             action = VoiceAction(name: String(localized: "Open \(target)"), say: [], steps: [.openApp(target)])
         case .menu(let item):
+            // A fragment several menu items share ("vertically") is a mishear, not a name for this one.
+            let shared = context.menu.filter { Phrase.normalize($0.title).contains(phrase) }.count
+            guard shared < 2 || Phrase.normalize(item.title) == phrase else { return nil }
             target = item.display
             action = VoiceAction(name: item.title, say: [], when: .init(app: context.bundleID), steps: [.menu(item.path)])
         case .action(let chosen, let parameters) where parameters.isEmpty:

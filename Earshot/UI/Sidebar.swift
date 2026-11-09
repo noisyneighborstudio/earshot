@@ -303,7 +303,7 @@ private struct CallStatusCard: View {
     }
 }
 
-private struct UndoBanner: View {
+struct UndoBanner: View {
     let title: String
     let undo: () -> Void
 

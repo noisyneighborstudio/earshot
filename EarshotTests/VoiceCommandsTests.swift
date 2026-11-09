@@ -288,6 +288,27 @@ struct LearningTests {
         #expect(commands.actions.first?.action.isLearned == false)
     }
 
+    @Test func skipsFragmentsSeveralMenuItemsShare() throws {
+        let commands = try commands()
+        defer { try? FileManager.default.removeItem(at: commands.library.directory) }
+        let split = MenuItem(path: ["Shell", "Split Vertically with Current Profile"], enabled: true)
+        var context = CommandContext(appName: "iTerm2", bundleID: "com.googlecode.iterm2")
+        context.menu = [split, MenuItem(path: ["Shell", "Split Vertically…"], enabled: true)]
+        #expect(commands.lesson("vertically", as: .menu(split), context: context) == nil)
+        #expect(commands.lesson("split the window vertically", as: .menu(split), context: context) != nil)
+    }
+
+    @Test func deleteCanBeUndone() throws {
+        let commands = try commands()
+        defer { try? FileManager.default.removeItem(at: commands.library.directory) }
+        try commands.library.add(try action(#"{"name":"Standup","say":["standup"],"steps":[{"open_app":"Zoom"}]}"#))
+        commands.reload()
+        try commands.remove(commands.actions[0])
+        #expect(commands.actions.isEmpty && commands.deleted?.name == "Standup")
+        try commands.undoDelete()
+        #expect(commands.actions.map(\.action.name) == ["Standup"] && commands.deleted == nil)
+    }
+
     @Test func candidatesSaveOnTheSecondTime() throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: "earshot-cand-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
