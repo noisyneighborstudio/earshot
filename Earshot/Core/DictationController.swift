@@ -4,11 +4,12 @@ import os
 /// The dictation state machine:
 /// hold hotkey → talk → release → on-device transcript → paste.
 /// A quick double-tap locks hands-free mode; press again to finish. Escape cancels.
+/// Adding ⌃ makes it a voice command: the words run a command in the frontmost app instead.
 @MainActor
 @Observable
 final class DictationController {
     struct Notice: Equatable {
-        enum Kind { case clipboard, error }
+        enum Kind { case clipboard, error, done }
         let text: String
         let kind: Kind
     }
@@ -22,6 +23,8 @@ final class DictationController {
     private(set) var phase: Phase = .idle { didSet { stateChanged() } }
     private(set) var level: Float = 0
     private(set) var partial = ""
+    /// This press is a voice command (hotkey + ⌃), not dictation.
+    private(set) var isCommand = false
     private(set) var notice: Notice? { didSet { stateChanged() } }
 
     @ObservationIgnored var onOverlayVisibilityChange: ((Bool) -> Void)?
@@ -32,6 +35,7 @@ final class DictationController {
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private let history: HistoryStore
     @ObservationIgnored private let speech: SpeechEngine
+    @ObservationIgnored private let commands: VoiceCommands
     @ObservationIgnored private let inserter = TextInserter()
     @ObservationIgnored private let log = Logger(subsystem: "studio.noisyneighbor.earshot", category: "dictation")
 
@@ -39,6 +43,8 @@ final class DictationController {
         let audio: AudioCapture
         let transcription: TranscriptionSession
         let context: FocusContext
+        /// Set once ⌃ joins: the app the command acts on.
+        var command: CommandContext?
     }
 
     @ObservationIgnored private var session: Session?
@@ -52,10 +58,11 @@ final class DictationController {
     private static let holdThreshold: Duration = .milliseconds(300)
     private static let doubleTapWindow: Duration = .milliseconds(500)
 
-    init(settings: AppSettings, history: HistoryStore, speech: SpeechEngine) {
+    init(settings: AppSettings, history: HistoryStore, speech: SpeechEngine, commands: VoiceCommands) {
         self.settings = settings
         self.history = history
         self.speech = speech
+        self.commands = commands
     }
 
     func handle(_ event: HotkeyEvent) {
@@ -68,6 +75,8 @@ final class DictationController {
             released(at: at)
         case (.chord, .listening(handsFree: false)):
             cancel()
+        case (.command, .listening):
+            enterCommandMode()
         case (.escape, .listening), (.escape, .processing):
             cancel()
         default:
@@ -89,6 +98,12 @@ final class DictationController {
         }
     }
 
+    private func enterCommandMode() {
+        guard session != nil, session?.command == nil else { return }
+        session?.command = CommandContext.capture()
+        isCommand = true
+    }
+
     // MARK: - Pipeline
 
     private func begin(at: ContinuousClock.Instant) {
@@ -108,6 +123,7 @@ final class DictationController {
         notice = nil
         partial = ""
         level = 0
+        isCommand = false
 
         let audio = AudioCapture()
         do {
@@ -143,6 +159,10 @@ final class DictationController {
 
         let current = generation
         let context = session.context
+        if let command = session.command {
+            work = Task { await runCommand(session.transcription, in: command, generation: current) }
+            return
+        }
 
         work = Task {
             do {
@@ -172,6 +192,29 @@ final class DictationController {
         }
     }
 
+    private func runCommand(_ transcription: TranscriptionSession, in context: CommandContext, generation current: Int) async {
+        do {
+            let text = try await transcription.finish().text
+            guard current == generation, !Task.isCancelled else { return }
+            guard !text.isEmpty else {
+                phase = .idle
+                return
+            }
+            let outcome = await commands.run(text, in: context)
+            guard current == generation else { return }
+            phase = .idle
+            switch outcome {
+            case .done(let what): show(what, kind: .done)
+            case .proposed(let message): show(message, kind: .done, for: .seconds(5))
+            case .noMatch(let message), .failed(let message): show(message, for: .seconds(5))
+            }
+        } catch {
+            guard current == generation, !Task.isCancelled else { return }
+            phase = .idle
+            show(error.localizedDescription)
+        }
+    }
+
     private func cancel() {
         generation += 1
         work?.cancel()
@@ -186,12 +229,12 @@ final class DictationController {
 
     // MARK: - Feedback
 
-    private func show(_ message: String, kind: Notice.Kind = .error) {
+    private func show(_ message: String, kind: Notice.Kind = .error, for duration: Duration = .seconds(3)) {
         noticeGeneration += 1
         let current = noticeGeneration
         notice = Notice(text: message, kind: kind)
         Task {
-            try? await Task.sleep(for: .seconds(3))
+            try? await Task.sleep(for: duration)
             if noticeGeneration == current { notice = nil }
         }
     }

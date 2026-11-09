@@ -4,6 +4,7 @@ struct SettingsView: View {
     @Bindable var settings: AppSettings
     let speech: SpeechEngine
     let updater: Updater
+    let commands: VoiceCommands
 
     var body: some View {
         Form {
@@ -43,6 +44,8 @@ struct SettingsView: View {
             } footer: {
                 Text("One word or phrase per line: names, jargon, product terms. Used for recognition and spelling.")
             }
+
+            VoiceCommandsSection(commands: commands, hotkey: settings.hotkey)
 
             AgentsSection()
 

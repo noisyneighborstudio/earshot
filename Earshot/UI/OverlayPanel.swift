@@ -43,6 +43,8 @@ final class OverlayPanel {
 struct OverlayView: View {
     let controller: DictationController
     private static let live = Color(red: 0.35, green: 0.78, blue: 0.98)
+    /// Command mode looks different, so it's never mistaken for typing.
+    private static let command = Color(red: 0.78, green: 0.55, blue: 1)
 
     var body: some View {
         HStack(spacing: 12) {
@@ -61,6 +63,22 @@ struct OverlayView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private static func symbol(_ kind: DictationController.Notice.Kind) -> String {
+        switch kind {
+        case .clipboard: "doc.on.clipboard"
+        case .error: "exclamationmark.circle"
+        case .done: "checkmark.circle.fill"
+        }
+    }
+
+    private static func tint(_ kind: DictationController.Notice.Kind) -> Color {
+        switch kind {
+        case .clipboard: .orange
+        case .error: Color(red: 1, green: 0.41, blue: 0.38)
+        case .done: command
+        }
+    }
+
     private var trailingPadding: CGFloat {
         if case .listening(handsFree: true) = controller.phase { return 8 }
         return 18
@@ -70,7 +88,14 @@ struct OverlayView: View {
     private var content: some View {
         switch controller.phase {
         case .listening(let handsFree):
-            LevelMeter(level: controller.level, color: Self.live)
+            LevelMeter(level: controller.level, color: controller.isCommand ? Self.command : Self.live)
+            if controller.isCommand {
+                Text("Command")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .frame(height: 22)
+                    .background(Self.command.opacity(0.3), in: Capsule())
+            }
             if handsFree {
                 Image(systemName: "lock.fill").font(.system(size: 12, weight: .semibold))
                 Text(controller.partial.isEmpty ? String(localized: "Hands-free") : controller.partial)
@@ -97,12 +122,12 @@ struct OverlayView: View {
             }
         case .processing:
             ProgressView().controlSize(.small).tint(.white)
-            Text("Writing…").foregroundStyle(.white.opacity(0.82))
+            Text(controller.isCommand ? "Working…" : "Writing…").foregroundStyle(.white.opacity(0.82))
         case .idle:
             if let notice = controller.notice {
-                Image(systemName: notice.kind == .clipboard ? "doc.on.clipboard" : "exclamationmark.circle")
+                Image(systemName: Self.symbol(notice.kind))
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(notice.kind == .clipboard ? Color.orange : Color(red: 1, green: 0.41, blue: 0.38))
+                    .foregroundStyle(Self.tint(notice.kind))
                 Text(verbatim: notice.text).lineLimit(2)
             }
         }

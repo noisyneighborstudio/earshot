@@ -86,11 +86,50 @@ enum NotesTools {
                 "before": ["type": "string", "description": "Before; a bare date includes that whole day."],
             ]) { a, _ in a }),
             annotations: readOnly),
+        Tool(
+            name: "list_actions",
+            description: """
+                The user's Earshot voice commands: approved actions and proposals awaiting approval. The user holds \
+                their dictation key + Control and speaks; any menu item of the frontmost app also works without an action.
+                """,
+            inputSchema: schema([:]),
+            annotations: readOnly),
+        Tool(
+            name: "propose_action",
+            description: """
+                Propose a new voice command for the user. It's saved as a proposal; the user approves it in NN Earshot \
+                › Settings › Voice Commands before it runs. Steps run in order; each has exactly one key. Prefer a menu \
+                step (exact menu titles) over a keystroke. Phrases are spoken, lowercase, no punctuation; {name} \
+                captures words as a parameter usable in open_url, which also gets {url} (frontmost page) and {app}.
+                """,
+            inputSchema: schema([
+                "name": ["type": "string", "description": "Short title, e.g. \"Search GitHub\"."],
+                "say": ["type": "array", "items": ["type": "string"], "minItems": 1,
+                        "description": "1-4 phrases, e.g. [\"search github for {query}\"]."],
+                "when": ["type": "object", "description": "Omit for everywhere. Most specific match wins.", "properties": [
+                    "app": ["type": "string", "description": "Frontmost app's bundle id, e.g. com.apple.Safari."],
+                    "url": ["type": "string", "description": "Glob on the frontmost window's URL, e.g. *://github.com/*."],
+                ]],
+                "steps": ["type": "array", "minItems": 1, "items": [
+                    "type": "object",
+                    "description": "One of: {\"open_app\": \"Notes\"}, {\"open_url\": \"https://…{query}\"}, {\"keystroke\": \"cmd+shift+d\"}, {\"menu\": [\"File\", \"Export as PDF…\"]}, {\"shortcut\": \"Shortcut name\"}.",
+                    "properties": [
+                        "open_app": ["type": "string"], "open_url": ["type": "string"], "keystroke": ["type": "string"],
+                        "menu": ["type": "array", "items": ["type": "string"]], "shortcut": ["type": "string"],
+                    ],
+                ]],
+            ], required: ["name", "say", "steps"]),
+            annotations: Tool.Annotations(readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false)),
     ]
 
-    static func call(_ params: CallTool.Parameters, library: NotesLibrary) async -> CallTool.Result {
+    static func call(_ params: CallTool.Parameters, library: NotesLibrary, actions: ActionLibrary) async -> CallTool.Result {
         do {
             let data = try JSONEncoder().encode(params.arguments ?? [:])
+            switch params.name {
+            case "list_actions": return result(try Output.json(Self.actions(actions)))
+            case "propose_action": return result(try Self.propose(data, to: actions))
+            default: break
+            }
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             let args: ToolArguments
@@ -107,10 +146,41 @@ enum NotesTools {
             case "search_dictations": try Output.json(await library.dictations(args))
             default: throw NotesError("Unknown tool '\(params.name)'.")
             }
-            return .init(content: [.text(text: text, annotations: nil, _meta: nil)], isError: false)
+            return result(text)
         } catch {
             return .init(content: [.text(text: error.localizedDescription, annotations: nil, _meta: nil)], isError: true)
         }
+    }
+
+    private static func result(_ text: String) -> CallTool.Result {
+        .init(content: [.text(text: text, annotations: nil, _meta: nil)], isError: false)
+    }
+
+    private struct ActionList: Encodable {
+        let actions: [VoiceAction]
+        let proposed: [VoiceAction]
+        let invalid: [String]
+    }
+
+    private static func actions(_ library: ActionLibrary) -> ActionList {
+        let approved = library.load(), proposed = library.load(proposals: true)
+        return ActionList(actions: approved.actions.map(\.action), proposed: proposed.actions.map(\.action),
+                          invalid: (approved.invalid + proposed.invalid).map { "\($0.file.lastPathComponent): \($0.problem)" })
+    }
+
+    private static func propose(_ arguments: Data, to library: ActionLibrary) throws -> String {
+        let action: VoiceAction
+        do {
+            action = try JSONDecoder().decode(VoiceAction.self, from: arguments)
+        } catch {
+            throw NotesError("Invalid action: \(ActionLibrary.describe(error))")
+        }
+        if let problem = action.problems().first { throw NotesError("Invalid action: \(problem)") }
+        try library.propose(action)
+        var text = "Proposed \"\(action.name)\". The user approves it in NN Earshot › Settings › Voice Commands before it can run."
+        let clashes = library.collisions(action, with: library.load().actions)
+        if !clashes.isEmpty { text += " Note: these phrases are already used at the same scope: \(clashes.joined(separator: ", "))." }
+        return text
     }
 
     // MARK: Resources and prompts

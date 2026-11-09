@@ -14,6 +14,7 @@ final class AppModel {
     let navigation = AppNavigation()
     let meetingActions = MeetingActions()
     let updater = Updater()
+    let commands = VoiceCommands()
     let controller: DictationController
     let recorder: MeetingRecorder
 
@@ -30,7 +31,7 @@ final class AppModel {
         let settings = self.settings
         let speech = self.speech
         let detector = self.detector
-        let controller = DictationController(settings: settings, history: history, speech: speech)
+        let controller = DictationController(settings: settings, history: history, speech: speech, commands: commands)
         let recorder = MeetingRecorder(speech: speech, store: meetings, settings: settings)
         let mainWindow = self.mainWindow
         let corrections = CorrectionTracker(suggestions: suggestions, settings: settings)
