@@ -8,8 +8,9 @@ struct EarshotApp: App {
         MenuBarExtra {
             MenuView(model: model)
         } label: {
-            Image(systemName: model.recorder.state == .recording ? "record.circle"
-                  : model.controller.phase == .idle ? "waveform" : "waveform.badge.mic")
+            // Template images from the app icon's mic: macOS tints them for the menu bar.
+            Image(model.recorder.state == .recording ? "MenuBarRecording"
+                  : model.controller.phase == .idle ? "MenuBarIdle" : "MenuBarDictating")
         }
         .menuBarExtraStyle(.window)
 
