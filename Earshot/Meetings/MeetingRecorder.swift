@@ -21,6 +21,8 @@ final class MeetingRecorder {
     private(set) var speakingNow: [String] = []
     /// Still-changing text per stream, shown after the final lines.
     private(set) var pending: [Meeting.Speaker: String] = [:]
+    /// The mic's 0...1 level while recording, so a voice note shows it's hearing you.
+    private(set) var micLevel: Float = 0
 
     @ObservationIgnored var onStateChange: ((State) -> Void)?
     @ObservationIgnored var onNotesReady: ((Meeting) -> Void)?
@@ -39,6 +41,8 @@ final class MeetingRecorder {
     }
 
     @ObservationIgnored private var capture: Capture?
+    /// Drops level updates still in flight from an earlier recording.
+    @ObservationIgnored private var generation = 0
     /// Keeps App Nap from throttling us (and the Mac from idling to sleep) while recording.
     @ObservationIgnored private var activity: NSObjectProtocol?
     @ObservationIgnored private var lastSave = ContinuousClock.now
@@ -92,7 +96,17 @@ final class MeetingRecorder {
         let mic = AudioCapture()
         let tap = others.map { _ in SystemAudioTap() }
         do {
-            try mic.start(format: me.format) { buffer, _ in me.append(buffer) }
+            generation += 1
+            let current = generation
+            try mic.start(format: me.format) { [weak self] buffer, level in
+                me.append(buffer)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self, self.generation == current, self.state == .recording else { return }
+                        self.micLevel = level
+                    }
+                }
+            }
             if let tap, let others {
                 try tap.start(processes: processes, format: others.format) { others.append($0) }
             }
@@ -151,6 +165,7 @@ final class MeetingRecorder {
         speakers = nil
         speakingNow = []
         pending = [:]
+        micLevel = 0
         meeting.endedAt = .now
         meeting.participants = participants.isEmpty ? nil : participants
         current = meeting
