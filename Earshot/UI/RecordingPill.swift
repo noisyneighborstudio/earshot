@@ -48,6 +48,9 @@ private struct RecordingPill: View {
         HStack(spacing: 12) {
             if recorder.state == .summarizing {
                 ProgressView().controlSize(.small).tint(.white)
+            } else if recorder.current?.isNote == true {
+                // Mic only: show it's hearing you.
+                LevelMeter(level: recorder.micLevel, color: Theme.recording)
             } else {
                 Circle()
                     .fill(Theme.recording)
