@@ -180,8 +180,12 @@ struct ClaudeRouterTests {
         #expect(ClaudeRouter.match(try ClaudeRouter.decode(#"{"command": "Open app: iTerm", "parameters": []}"#), candidates: candidates)
             == .openApp(name: "iTerm", url: iterm))
         #expect(ClaudeRouter.match(.init(command: "Menu: File › Save", parameters: nil), candidates: candidates) == .menu(save))
+        #expect(ClaudeRouter.match(.init(command: "- \"Open app: iTerm.\"", parameters: nil), candidates: candidates)
+            == .openApp(name: "iTerm", url: iterm))
         #expect(ClaudeRouter.match(.init(command: "Action: HN (says: hn {query})", parameters: ["swift"]), candidates: candidates)
             == .action(search, parameters: ["query": "swift"]))
+        #expect(ClaudeRouter.match(.init(command: "Action: HN", parameters: ["rust"]), candidates: candidates)
+            == .action(search, parameters: ["query": "rust"]), "name only, as Claude sometimes answers")
         #expect(ClaudeRouter.match(.init(command: "Action: HN (says: hn {query})", parameters: []), candidates: candidates) == nil,
                 "missing parameter")
         #expect(ClaudeRouter.match(try ClaudeRouter.decode(#"{"command": null}"#), candidates: candidates) == nil)

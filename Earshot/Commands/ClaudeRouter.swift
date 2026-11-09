@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// When no phrase matches exactly, Claude picks among what's available right now (this window's
 /// actions and menu items, and installed apps), or nothing. It only chooses from the list, and it
@@ -16,6 +17,11 @@ enum ClaudeRouter {
             case .app(let name, _): "Open app: \(name)"
             }
         }
+
+        /// Claude sometimes copies only an action's name, without its phrases.
+        var shortLine: String {
+            if case .action(let action) = self { "Action: \(action.name)" } else { line }
+        }
     }
 
     /// The chosen line, copied verbatim; text, not a number, so long lists can't be miscounted.
@@ -29,7 +35,10 @@ enum ClaudeRouter {
         let reply = try await cli.run(
             model: "claude-haiku-5-5", effort: "low", system: system,
             input: input(utterance, candidates: candidates, appName: appName), timeout: .seconds(30))
-        return match(try decode(reply), candidates: candidates)
+        let result = match(try decode(reply), candidates: candidates)
+        Logger(subsystem: "studio.noisyneighbor.earshot", category: "commands").notice(
+            "heard “\(utterance, privacy: .public)”, \(candidates.count) candidates; Claude: \(reply, privacy: .public) → \(result == nil ? "no match" : "matched")")
+        return result
     }
 
     static func input(_ utterance: String, candidates: [Candidate], appName: String) -> String {
@@ -46,8 +55,10 @@ enum ClaudeRouter {
 
     /// The chosen command, or nil for none or a line that isn't on the list.
     static func match(_ choice: Choice, candidates: [Candidate]) -> CommandMatch? {
-        guard let line = choice.command?.trimmingCharacters(in: .whitespaces),
-              let candidate = candidates.first(where: { $0.line == line }) else { return nil }
+        // Compared normalized, so a stray dash, quotes or period in the copy don't lose the match.
+        guard let line = choice.command.map(Phrase.normalize), !line.isEmpty,
+              let candidate = candidates.first(where: { Phrase.normalize($0.line) == line })
+                ?? candidates.first(where: { Phrase.normalize($0.shortLine) == line }) else { return nil }
         switch candidate {
         case .menu(let item): return .menu(item)
         case .app(let name, let url): return .openApp(name: name, url: url)
