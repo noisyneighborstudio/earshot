@@ -56,6 +56,12 @@ final class VoiceCommands {
         reload()
     }
 
+    /// An edited action or proposal, in place.
+    func save(_ action: VoiceAction, to entry: ActionLibrary.Entry) throws {
+        try library.save(action, to: entry.file)
+        reload()
+    }
+
     func collisions(_ proposal: ActionLibrary.Entry) -> [String] { library.collisions(proposal.action, with: actions) }
 
     func revealFolder() {
