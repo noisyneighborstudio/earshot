@@ -15,7 +15,7 @@ enum ClaudeRouter {
         var line: String {
             switch self {
             case .website: "Open website"
-            case .action(let action): "Action: \(action.name) (says: \(action.say.joined(separator: " / ")))"
+            case .action(let action): "Action: \(action.name) (says: \(action.phrases.joined(separator: " / ")))"
             case .menu(let item): "Menu: \(item.display)"
             case .app(let name, _): "Open app: \(name)"
             }
@@ -116,7 +116,7 @@ enum ClaudeRouter {
                   ["http", "https"].contains(url.scheme?.lowercased()), url.host() != nil else { return nil }
             return .openURL(url)
         case .action(let action):
-            let names = action.say.lazy.map { Phrase($0).parameters }.first { !$0.isEmpty } ?? []
+            let names = action.phrases.lazy.map { Phrase($0).parameters }.first { !$0.isEmpty } ?? []
             let values = parameters ?? []
             guard names.count == values.count else { return nil }
             return .action(action, parameters: Dictionary(uniqueKeysWithValues: zip(names, values)))

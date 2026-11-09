@@ -7,18 +7,24 @@ struct SettingsView: View {
     let commands: VoiceCommands
 
     var body: some View {
-        TabView {
-            Tab("General", systemImage: "gearshape") { general }
-            Tab("Dictionary", systemImage: "character.book.closed") { dictionary }
-            Tab("Voice Commands", systemImage: "command") {
+        TabView(selection: $tab) {
+            Tab("General", systemImage: "gearshape", value: .general) { general }
+            Tab("Dictionary", systemImage: "character.book.closed", value: .dictionary) { dictionary }
+            Tab("Voice Commands", systemImage: "command", value: .commands) {
                 Form { VoiceCommandsSection(commands: commands, hotkey: settings.hotkey) }.formStyle(.grouped)
             }
-            Tab("Agents", systemImage: "point.3.connected.trianglepath.dotted") {
+            .badge(tab == .commands ? 0 : commands.unseenLearned)
+            Tab("Agents", systemImage: "point.3.connected.trianglepath.dotted", value: .agents) {
                 Form { AgentsSection() }.formStyle(.grouped)
             }
         }
         .frame(width: 540, height: 560)
+        // Edit on the overlay opens the command's editor here.
+        .onChange(of: commands.editRequest, initial: true) { if commands.editRequest != nil { tab = .commands } }
     }
+
+    enum Pane: Hashable { case general, dictionary, commands, agents }
+    @State private var tab = Pane.general
 
     private var general: some View {
         Form {

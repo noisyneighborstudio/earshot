@@ -3,17 +3,18 @@ import os
 
 /// Runs what the user says in command mode (dictation key + ⌃): exact matches first
 /// (`CommandMatcher`), then Claude choosing from what's available, never a guess. "Make an action …" has Claude
-/// draft a new action, which waits in Settings until the user approves it.
+/// draft a new action, added right away. What Claude resolves is learned when the user picks it, taps
+/// Remember, or says the same thing twice; a one-off mishear is never saved.
 @MainActor
 @Observable
 final class VoiceCommands {
     enum Outcome: Equatable {
-        /// What was done, and the phrase learned from it if Claude had to resolve it.
-        case done(String, learned: Learned?)
+        /// What was done, and, if Claude resolved it, the phrase learned or offered.
+        case done(String, memory: Memory?)
         /// An action made by voice: the user asked for it, so it's added right away, with Undo.
         case added(name: String, learned: Learned)
         /// Claude wasn't sure; the user picks by clicking or by saying the option.
-        case question(ClaudeRouter.Question)
+        case question(ClaudeRouter.Question, heard: String)
         case noMatch(String)
         case failed(String)
     }
@@ -25,8 +26,32 @@ final class VoiceCommands {
     private(set) var askingClaude = false
     /// Claude's open question, with what was said and the window it applies to.
     @ObservationIgnored private var pending: (question: ClaudeRouter.Question, utterance: String, context: CommandContext, asked: ContinuousClock.Instant)?
+    /// Set by Edit on the overlay; Settings opens this action's editor.
+    var editRequest: URL?
+    /// When Settings › Voice Commands was last looked at; newer learned commands get a badge.
+    private(set) var learnedSeen = UserDefaults.standard.object(forKey: "learnedCommandsSeen") as? Date ?? .distantPast
+    var unseenLearned: Int { actions.filter { !$0.action.learned.isEmpty && $0.modified > learnedSeen }.count }
+
+    func markLearnedSeen() {
+        learnedSeen = .now
+        UserDefaults.standard.set(learnedSeen, forKey: "learnedCommandsSeen")
+    }
     /// As long as the overlay shows the question.
     static let questionLifetime: Duration = .seconds(20)
+
+    enum Memory: Equatable {
+        /// Saved; the toast offers Undo.
+        case learned(Learned)
+        /// Not saved yet; the toast offers Remember.
+        case offer(Lesson)
+    }
+
+    /// A phrase Claude resolved and the action it would be saved into.
+    struct Lesson: Codable, Equatable {
+        let phrase: String
+        let target: String
+        let action: VoiceAction
+    }
 
     /// What Claude resolved, saved as an exact phrase so next time needs no Claude. Undoable.
     struct Learned: Equatable {
@@ -38,6 +63,7 @@ final class VoiceCommands {
     }
 
     @ObservationIgnored let library: ActionLibrary
+    @ObservationIgnored private lazy var candidates = LearningCandidates(file: library.directory.appending(path: ".candidates.json"))
     @ObservationIgnored private let log = Logger(subsystem: "studio.noisyneighbor.earshot", category: "commands")
 
     init(library: ActionLibrary = EarshotData.actions) {
@@ -81,7 +107,7 @@ final class VoiceCommands {
     /// Words the recognizer should expect in command mode: app names, action phrases, menu titles.
     func vocabulary(for context: CommandContext) -> [String] {
         var words = CommandMatcher.installedApps().values.map { $0.deletingPathExtension().lastPathComponent }
-        words += actions.flatMap { $0.action.say.map { Phrase($0).literal } }
+        words += actions.flatMap { $0.action.phrases.map { Phrase($0).literal } }
         words += context.menu.filter(\.enabled).map(\.title)
         var seen = Set<String>()
         return words.filter { !$0.isEmpty && seen.insert($0).inserted }
@@ -96,7 +122,7 @@ final class VoiceCommands {
         let actions = actions.map(\.action)
         let apps = CommandMatcher.installedApps()
         let matcher = CommandMatcher(actions: actions, menu: context.menu, apps: apps, bundleID: context.bundleID, url: context.url)
-        if let match = matcher.match(utterance) { return await perform(match, utterance: utterance, learning: false, context: context) }
+        if let match = matcher.match(utterance) { return await perform(match, utterance: utterance, learning: .never, context: context) }
         guard let cli = ClaudeCLI.locate() else {
             return .noMatch(String(localized: "No command for “\(utterance)” in \(context.appName). Say “make an action …” to add one."))
         }
@@ -116,21 +142,23 @@ final class VoiceCommands {
             return .failed(error.localizedDescription)
         }
         switch route {
-        case .match(let match): return await perform(match, utterance: utterance, learning: true, context: context)
+        case .match(let match): return await perform(match, utterance: utterance, learning: .offer, context: context)
         case .ask(let question):
             pending = (question, utterance, context, .now)
-            return .question(question)
+            return .question(question, heard: utterance)
         case nil:
             return .noMatch(String(localized: "No command for “\(utterance)” in \(context.appName). Say “make an action …” to add one."))
         }
     }
+
+    func dismissQuestion() { pending = nil }
 
     /// Runs the option picked for Claude's question, and remembers the original words for it.
     func answer(_ index: Int) async -> Outcome {
         guard let pending, pending.asked.duration(to: .now) < Self.questionLifetime + .seconds(1),
               pending.question.options.indices.contains(index) else { return .failed(String(localized: "That question has expired.")) }
         self.pending = nil
-        return await perform(pending.question.options[index].match, utterance: pending.utterance, learning: true, context: pending.context)
+        return await perform(pending.question.options[index].match, utterance: pending.utterance, learning: .now, context: pending.context)
     }
 
     /// Which option a spoken answer names: "the beta one", "nightly", "second", "two".
@@ -148,15 +176,21 @@ final class VoiceCommands {
         return hits.count == 1 ? hits[0] : nil
     }
 
-    private func perform(_ match: CommandMatch, utterance: String, learning: Bool, context: CommandContext) async -> Outcome {
+    /// `now`: the user picked it from Claude's question. `offer`: Claude picked it; saved on the second time.
+    enum Learning { case never, offer, now }
+
+    private func perform(_ match: CommandMatch, utterance: String, learning: Learning, context: CommandContext) async -> Outcome {
         do {
             let done = try await perform(match, context: context)
-            guard learning else { return .done(done, learned: nil) }
+            guard learning != .never, let lesson = lesson(utterance, as: match, context: context) else { return .done(done, memory: nil) }
             do {
-                return .done(done, learned: try learn(utterance, as: match, context: context))
+                if learning == .now || candidates.recordRepeat(lesson) {
+                    return .done(done, memory: try remember(lesson).map(Memory.learned))
+                }
+                return .done(done, memory: .offer(lesson))
             } catch {
                 log.error("couldn't learn “\(utterance)”: \(error.localizedDescription)")
-                return .done(done, learned: nil)
+                return .done(done, memory: nil)
             }
         } catch {
             log.error("command failed: \(error.localizedDescription)")
@@ -223,41 +257,52 @@ final class VoiceCommands {
 
     // MARK: Learning
 
-    /// Saves the utterance as a phrase for what Claude chose: added to an action with the same steps
-    /// and scope if there is one, else a new action. Commands with parameters or URLs aren't learned.
-    func learn(_ utterance: String, as match: CommandMatch, context: CommandContext) throws -> Learned? {
+    /// What saving the utterance for Claude's choice would add. Commands with parameters, or URLs in a
+    /// specific browser, aren't learned.
+    func lesson(_ utterance: String, as match: CommandMatch, context: CommandContext) -> Lesson? {
         let phrase = Phrase.normalize(utterance)
         guard !phrase.isEmpty else { return nil }
         let action: VoiceAction, target: String
         switch match {
         case .openApp(_, let url):
             target = url.deletingPathExtension().lastPathComponent
-            action = VoiceAction(name: String(localized: "Open \(target)"), say: [phrase], steps: [.openApp(target)])
+            action = VoiceAction(name: String(localized: "Open \(target)"), say: [], steps: [.openApp(target)])
         case .menu(let item):
             target = item.display
-            action = VoiceAction(name: String(localized: "\(item.title) in \(context.appName)"), say: [phrase],
-                                 when: .init(app: context.bundleID), steps: [.menu(item.path)])
+            action = VoiceAction(name: item.title, say: [], when: .init(app: context.bundleID), steps: [.menu(item.path)])
         case .action(let chosen, let parameters) where parameters.isEmpty:
             target = chosen.name
             action = chosen
         case .openURL(let url, nil):
             target = url.host() ?? url.absoluteString
-            action = VoiceAction(name: String(localized: "Open \(target)"), say: [phrase], steps: [.openURL(url.absoluteString)])
+            action = VoiceAction(name: String(localized: "Open \(target)"), say: [], steps: [.openURL(url.absoluteString)])
         case .action, .openURL:
             return nil
         }
+        return Lesson(phrase: phrase, target: target, action: action)
+    }
+
+    /// Saves the lesson's phrase as learned: into the action with the same steps and scope, else a new one.
+    /// Nil if that action already answers to it.
+    func remember(_ lesson: Lesson) throws -> Learned? {
         reload()
+        candidates.remove(lesson)
+        let action = lesson.action
         if let existing = actions.first(where: { $0.action.steps == action.steps && $0.action.when == action.when }) {
+            guard existing.action.match(lesson.phrase) == nil else { return nil }
             let previous = try Data(contentsOf: existing.file)
             var updated = existing.action
-            updated.say.append(phrase)
+            updated.learned.append(lesson.phrase)
             try library.save(updated, to: existing.file)
             reload()
-            return Learned(phrase: phrase, target: target, file: existing.file, previous: previous)
+            return Learned(phrase: lesson.phrase, target: lesson.target, file: existing.file, previous: previous)
         }
-        let file = try library.add(action)
+        var new = action
+        new.say = []
+        new.learned = [lesson.phrase]
+        let file = try library.add(new)
         reload()
-        return Learned(phrase: phrase, target: target, file: file, previous: nil)
+        return Learned(phrase: lesson.phrase, target: lesson.target, file: file, previous: nil)
     }
 
     func forget(_ learned: Learned) throws {
@@ -297,7 +342,7 @@ final class VoiceCommands {
             let action = try Self.decodeDraft(reply)
             let file = try library.add(action)
             reload()
-            return .added(name: action.name, learned: Learned(phrase: action.say[0], target: action.name, file: file, previous: nil))
+            return .added(name: action.name, learned: Learned(phrase: action.phrases[0], target: action.name, file: file, previous: nil))
         } catch {
             log.error("drafting an action failed: \(error.localizedDescription)")
             return .failed(error.localizedDescription)
@@ -342,4 +387,50 @@ final class VoiceCommands {
         escape, delete, arrows, f1-f12). menu: exact titles from the app's menu items listed below.
         - Prefer menu items over keystrokes when one fits. Use only what the user asked for.
         """
+}
+
+/// Phrases Claude resolved once, waiting to be said again before they're saved. Expire after 30 days.
+struct LearningCandidates {
+    let file: URL
+    private struct Candidate: Codable {
+        let lesson: VoiceCommands.Lesson
+        let date: Date
+    }
+
+    static let lifetime: TimeInterval = 30 * 24 * 3600
+
+    /// True if the same phrase already led to the same action recently (then it's removed); else records it.
+    func recordRepeat(_ lesson: VoiceCommands.Lesson, now: Date = .now) -> Bool {
+        var list = load(now: now)
+        if list.contains(where: { Self.same($0.lesson, lesson) }) {
+            write(list.filter { !Self.same($0.lesson, lesson) })
+            return true
+        }
+        list.append(Candidate(lesson: lesson, date: now))
+        write(list)
+        return false
+    }
+
+    func remove(_ lesson: VoiceCommands.Lesson) {
+        let list = load(now: .now)
+        if list.contains(where: { Self.same($0.lesson, lesson) }) { write(list.filter { !Self.same($0.lesson, lesson) }) }
+    }
+
+    private static func same(_ a: VoiceCommands.Lesson, _ b: VoiceCommands.Lesson) -> Bool {
+        a.phrase == b.phrase && a.action.steps == b.action.steps && a.action.when == b.action.when
+    }
+
+    private func load(now: Date) -> [Candidate] {
+        guard let data = try? Data(contentsOf: file), let list = try? JSONDecoder().decode([Candidate].self, from: data) else { return [] }
+        return list.filter { now.timeIntervalSince($0.date) < Self.lifetime }
+    }
+
+    private func write(_ list: [Candidate]) {
+        do {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(list).write(to: file, options: .atomic)
+        } catch {
+            Logger(subsystem: "studio.noisyneighbor.earshot", category: "commands").error("couldn't save learning candidates: \(error.localizedDescription)")
+        }
+    }
 }

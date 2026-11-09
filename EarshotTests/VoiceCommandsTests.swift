@@ -222,6 +222,13 @@ struct ClaudeRouterTests {
     }
 }
 
+extension VoiceCommands {
+    /// Learning right away, as when the user picks Claude's option.
+    func learn(_ utterance: String, as match: CommandMatch, context: CommandContext) throws -> Learned? {
+        try lesson(utterance, as: match, context: context).flatMap(remember)
+    }
+}
+
 @MainActor
 struct LearningTests {
     private func commands() throws -> VoiceCommands {
@@ -239,18 +246,21 @@ struct LearningTests {
         let first = try #require(try commands.learn("Open High Term.", as: iterm, context: context))
         #expect(first.phrase == "open high term")
         #expect(first.previous == nil)
-        #expect(commands.actions.map(\.action.say) == [["open high term"]])
+        #expect(commands.actions.map(\.action.learned) == [["open high term"]])
+        #expect(commands.actions.first?.action.say == [], "learned, not chosen")
+        #expect(commands.actions.first?.action.isLearned == true)
         #expect(commands.actions.first?.action.steps == [.openApp("iTerm")])
 
         let second = try #require(try commands.learn("open eye term", as: iterm, context: context))
         #expect(second.file.lastPathComponent == first.file.lastPathComponent)
-        #expect(commands.actions.map(\.action.say) == [["open high term", "open eye term"]])
+        #expect(commands.actions.map(\.action.learned) == [["open high term", "open eye term"]])
+        #expect(try commands.learn("open eye term", as: iterm, context: context) == nil, "already answers to it")
         // Now an exact match: no Claude next time.
         let matcher = CommandMatcher(actions: commands.actions.map(\.action), menu: [], apps: [:], bundleID: "com.apple.finder")
         #expect(matcher.match("Open eye term") == .action(commands.actions[0].action, parameters: [:]))
 
         try commands.forget(second)
-        #expect(commands.actions.map(\.action.say) == [["open high term"]])
+        #expect(commands.actions.map(\.action.learned) == [["open high term"]])
         try commands.forget(first)
         #expect(commands.actions.isEmpty)
     }
@@ -263,6 +273,42 @@ struct LearningTests {
         let learned = try #require(commands.actions.first?.action)
         #expect(learned.when == .init(app: "com.apple.Safari"))
         #expect(learned.steps == [.menu(["Bookmarks", "Add Bookmark…"])])
+        #expect(learned.name == "Add Bookmark…", "the app shows as the group, not in the name")
+    }
+
+    @Test func learnsIntoAChosenActionWithoutTouchingItsPhrases() throws {
+        let commands = try commands()
+        defer { try? FileManager.default.removeItem(at: commands.library.directory) }
+        let standup = try action(#"{"name":"Standup","say":["standup"],"steps":[{"open_app":"Zoom"}]}"#)
+        try commands.library.add(standup)
+        commands.reload()
+        _ = try commands.learn("stand up meeting", as: .action(standup, parameters: [:]), context: CommandContext())
+        #expect(commands.actions.first?.action.say == ["standup"])
+        #expect(commands.actions.first?.action.learned == ["stand up meeting"])
+        #expect(commands.actions.first?.action.isLearned == false)
+    }
+
+    @Test func candidatesSaveOnTheSecondTime() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "earshot-cand-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let candidates = LearningCandidates(file: dir.appending(path: ".candidates.json"))
+        let lesson = VoiceCommands.Lesson(phrase: "vertically", target: "Split", action: VoiceAction(name: "Split", say: [], steps: [.menu(["Shell", "Split"])]))
+        let other = VoiceCommands.Lesson(phrase: "vertically", target: "Other", action: VoiceAction(name: "Other", say: [], steps: [.menu(["Shell", "Other"])]))
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        #expect(!candidates.recordRepeat(lesson, now: start))
+        #expect(!candidates.recordRepeat(other, now: start), "same words, different command")
+        #expect(candidates.recordRepeat(lesson, now: start.addingTimeInterval(60)))
+        #expect(!candidates.recordRepeat(lesson, now: start.addingTimeInterval(120)), "used up once saved")
+        #expect(!candidates.recordRepeat(other, now: start.addingTimeInterval(LearningCandidates.lifetime + 1)), "expired")
+    }
+
+    @Test func learnedPhrasesRoundTrip() throws {
+        let decoded = try action(#"{"name":"Split","learned":["split it"],"steps":[{"keystroke":"cmd+d"}]}"#)
+        #expect(decoded.say == [] && decoded.learned == ["split it"])
+        #expect(decoded.problems().isEmpty)
+        #expect(decoded.match("split it") == [:])
+        let encoded = String(decoding: try ActionLibrary.encoder.encode(VoiceAction(name: "A", say: ["a"], steps: [.keystroke("a")])), as: UTF8.self)
+        #expect(!encoded.contains("learned"), "omitted when empty")
     }
 
     @Test func learnsWebsites() throws {

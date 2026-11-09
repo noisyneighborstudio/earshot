@@ -48,6 +48,7 @@ final class OverlayPanel {
 /// Dark glass so it reads over any app, light or dark.
 struct OverlayView: View {
     let controller: DictationController
+    @Environment(\.openSettings) private var openSettings
     private static let live = Color(red: 0.35, green: 0.78, blue: 0.98)
     /// Command mode looks different, so it's never mistaken for typing.
     private static let command = Color(red: 0.78, green: 0.55, blue: 1)
@@ -65,6 +66,7 @@ struct OverlayView: View {
         .background(Color(white: 0.11, opacity: 0.86), in: Capsule())
         .overlay(Capsule().strokeBorder(.white.opacity(0.14)))
         .shadow(color: .black.opacity(0.25), radius: 15, y: 8)
+        .onHover { controller.hover($0) }
         .environment(\.colorScheme, .dark)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -136,12 +138,29 @@ struct OverlayView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Self.tint(notice.kind))
                 Text(verbatim: notice.text).lineLimit(2)
+                if let offer = notice.offer {
+                    Button { controller.rememberOffer() } label: {
+                        Text("Remember “\(offer.phrase)”").lineLimit(1)
+                    }
+                    .buttonStyle(PillButton())
+                }
+                if notice.edit != nil {
+                    Button("Edit") {
+                        controller.editMade()
+                        NSApp.activate()
+                        openSettings()
+                    }
+                    .buttonStyle(PillButton())
+                }
                 if notice.learned != nil {
                     Button("Undo") { controller.forgetLearned() }.buttonStyle(PillButton())
                 }
                 ForEach(Array(notice.options.enumerated()), id: \.offset) { index, option in
                     Button { controller.choose(index) } label: { Text(verbatim: option).lineLimit(1) }
                         .buttonStyle(PillButton())
+                }
+                if !notice.options.isEmpty {
+                    Button("None") { controller.dismissQuestion() }.buttonStyle(PillButton())
                 }
             }
         }

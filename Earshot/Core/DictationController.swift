@@ -14,8 +14,14 @@ final class DictationController {
         let kind: Kind
         /// A phrase just learned: the toast offers Undo.
         var learned: VoiceCommands.Learned?
-        /// Claude's follow-up question: a button per option.
+        /// A phrase Claude resolved, not saved yet: the toast offers Remember.
+        var offer: VoiceCommands.Lesson?
+        /// An action just made by voice: the toast offers Edit.
+        var edit: URL?
+        /// Claude's follow-up question: a button per option, and None.
         var options: [String] = []
+
+        var isInteractive: Bool { learned != nil || offer != nil || edit != nil || !options.isEmpty }
     }
 
     enum Phase: Equatable {
@@ -61,6 +67,7 @@ final class DictationController {
     @ObservationIgnored private var pressedAt: ContinuousClock.Instant?
     @ObservationIgnored private var lastQuickTap: ContinuousClock.Instant?
     @ObservationIgnored private var noticeGeneration = 0
+    @ObservationIgnored private var hovering = false
 
     private static let holdThreshold: Duration = .milliseconds(300)
     private static let doubleTapWindow: Duration = .milliseconds(500)
@@ -223,14 +230,54 @@ final class DictationController {
     private func present(_ outcome: VoiceCommands.Outcome) {
         switch outcome {
         case .done(let what, nil): show(what, kind: .done)
-        case .done(let what, let learned?):
-            show(String(localized: "\(what) · Remembered “\(learned.phrase)”"), kind: .done, learned: learned, for: .seconds(6))
+        case .done(let what, .learned(let learned)): showRemembered(what, learned)
+        case .done(let what, .offer(let lesson)):
+            show(what, kind: .done, offer: lesson, for: .seconds(8))
         case .added(let name, let learned):
-            show(String(localized: "Added “\(name)” · say “\(learned.phrase)”"), kind: .done, learned: learned, for: .seconds(8))
-        case .question(let question):
-            show(question.text, kind: .question, options: question.options.map(\.label), for: VoiceCommands.questionLifetime)
+            show(String(localized: "Added “\(name)” · say “\(learned.phrase)”"), kind: .done, learned: learned, edit: learned.file, for: .seconds(8))
+        case .question(let question, let heard):
+            show(String(localized: "You said “\(heard)” · \(question.text)"), kind: .question,
+                 options: question.options.map(\.label), for: VoiceCommands.questionLifetime)
         case .noMatch(let message), .failed(let message): show(message, for: .seconds(5))
         }
+    }
+
+    private func showRemembered(_ what: String, _ learned: VoiceCommands.Learned) {
+        show(String(localized: "\(what) · Remembered “\(learned.phrase)”"), kind: .done, learned: learned, for: .seconds(6))
+    }
+
+    /// Remember on the toast after a command Claude resolved.
+    func rememberOffer() {
+        guard let lesson = notice?.offer else { return }
+        do {
+            if let learned = try commands.remember(lesson) {
+                show(String(localized: "Remembered “\(learned.phrase)” for \(learned.target)"), kind: .done, learned: learned, for: .seconds(6))
+            } else {
+                notice = nil
+            }
+        } catch {
+            show(error.localizedDescription)
+        }
+    }
+
+    /// None on Claude's question.
+    func dismissQuestion() {
+        commands.dismissQuestion()
+        notice = nil
+    }
+
+    /// Edit on the toast after making an action: Settings opens on it.
+    func editMade() {
+        guard let file = notice?.edit else { return }
+        commands.editRequest = file
+        notice = nil
+    }
+
+    /// The pointer is over the toast: hold it until it leaves.
+    func hover(_ inside: Bool) {
+        hovering = inside
+        noticeGeneration += 1
+        if !inside, notice != nil { scheduleDismiss(after: .seconds(3)) }
     }
 
     /// A click on one of the question's options. Spoken answers go through `runCommand`.
@@ -275,13 +322,21 @@ final class DictationController {
     // MARK: - Feedback
 
     private func show(_ message: String, kind: Notice.Kind = .error, learned: VoiceCommands.Learned? = nil,
-                      options: [String] = [], for duration: Duration = .seconds(3)) {
+                      offer: VoiceCommands.Lesson? = nil, edit: URL? = nil, options: [String] = [],
+                      for duration: Duration = .seconds(3)) {
+        notice = Notice(text: message, kind: kind, learned: learned, offer: offer, edit: edit, options: options)
         noticeGeneration += 1
+        if !hovering || !(notice?.isInteractive ?? false) { scheduleDismiss(after: duration) }
+    }
+
+    private func scheduleDismiss(after duration: Duration) {
         let current = noticeGeneration
-        notice = Notice(text: message, kind: kind, learned: learned, options: options)
         Task {
             try? await Task.sleep(for: duration)
-            if noticeGeneration == current { notice = nil }
+            if noticeGeneration == current {
+                notice = nil
+                hovering = false
+            }
         }
     }
 
@@ -292,7 +347,7 @@ final class DictationController {
 
     private func stateChanged() {
         onOverlayVisibilityChange?(phase != .idle || notice != nil)
-        onOverlayInteractiveChange?(phase == .idle && (notice?.learned != nil || notice?.options.isEmpty == false))
+        onOverlayInteractiveChange?(phase == .idle && notice?.isInteractive == true)
         onActiveChange?(phase != .idle)
     }
 }
