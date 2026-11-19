@@ -17,6 +17,9 @@ final class AppModel {
     let commands = VoiceCommands()
     let controller: DictationController
     let recorder: MeetingRecorder
+    /// A detected call waiting on "Record?" (Ask mode). Shown in the floating pill, not a
+    /// notification: macOS hides banners while the screen is shared, which calls often are.
+    private(set) var callPrompt: DetectedCall?
 
     @ObservationIgnored let mainWindow = MainWindow()
     @ObservationIgnored private let corrections: CorrectionTracker
@@ -50,24 +53,6 @@ final class AppModel {
         settings.onLocaleChange = { speech.prepare(localeIdentifier: $0) }
         settings.onMeetingModeChange = { $0 == .off ? detector.stop() : detector.start() }
 
-        detector.onCallStarted = { call in
-            switch settings.meetingMode {
-            case .ask: notifier.callDetected(call)
-            case .automatic:
-                recorder.start(call: call, processes: detector.processObjects(for: call.platform),
-                               pids: detector.pids(for: call.platform))
-            case .off: break
-            }
-        }
-        detector.onCallEnded = { call in
-            notifier.clearCallPrompt()
-            if recorder.state == .recording, recorder.call?.platform == call.platform { recorder.stop() }
-        }
-        notifier.onTakeNotes = {
-            guard let call = detector.current else { return }
-            recorder.start(call: call, processes: detector.processObjects(for: call.platform),
-                           pids: detector.pids(for: call.platform))
-        }
         notifier.onOpenMeeting = { mainWindow.show(meeting: $0) }
         recorder.onNotesReady = { notifier.notesReady($0) }
 
@@ -94,9 +79,23 @@ final class AppModel {
         reopenHandler = ReopenHandler { mainWindow.show() }
         let recordingPanel = RecordingPanel(model: self)
         self.recordingPanel = recordingPanel
-        recorder.onStateChange = { state in
-            recordingPanel.setVisible(state != .idle)
-            overlay.lift = state == .idle ? 0 : RecordingPanel.height
+        recorder.onStateChange = { [weak self] _ in self?.updatePanel() }
+        detector.onCallStarted = { [weak self] call in
+            guard let self else { return }
+            switch settings.meetingMode {
+            case .ask:
+                callPrompt = call
+                updatePanel()
+            case .automatic:
+                recorder.start(call: call, processes: detector.processObjects(for: call.platform),
+                               pids: detector.pids(for: call.platform))
+            case .off: break
+            }
+        }
+        detector.onCallEnded = { [weak self] call in
+            guard let self else { return }
+            dismissCallPrompt()
+            if recorder.state == .recording, recorder.call?.platform == call.platform { recorder.stop() }
         }
         hotkeys.start()
         permissions.startMonitoring()
@@ -108,12 +107,25 @@ final class AppModel {
     /// unless the user asked to include computer audio). The floating pill shows it; the main
     /// window only jumps to it if it's already open.
     func recordMeeting() {
+        callPrompt = nil
         let call = detector.current
         recorder.start(
             call: call,
             processes: call.map { detector.processObjects(for: $0.platform) } ?? [],
             pids: call.map { detector.pids(for: $0.platform) } ?? [],
             includeComputerAudio: call == nil && settings.noteIncludesComputerAudio)
+        updatePanel()
         if mainWindow.isVisible, let id = recorder.current?.id { mainWindow.show(meeting: id) }
+    }
+
+    func dismissCallPrompt() {
+        callPrompt = nil
+        updatePanel()
+    }
+
+    private func updatePanel() {
+        let visible = recorder.state != .idle || callPrompt != nil
+        recordingPanel?.setVisible(visible)
+        overlay.lift = visible ? RecordingPanel.height : 0
     }
 }
