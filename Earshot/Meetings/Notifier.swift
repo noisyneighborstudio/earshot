@@ -2,42 +2,18 @@ import Foundation
 import os
 import UserNotifications
 
-/// "Call detected — take notes?" and "Notes ready" notifications.
+/// "Notes ready" notifications. (A detected call is offered in the floating pill instead:
+/// macOS hides banners while the screen is shared.)
 @MainActor
 final class Notifier: NSObject {
-    var onTakeNotes: (() -> Void)?
     var onOpenMeeting: ((Meeting.ID) -> Void)?
 
     private let center = UNUserNotificationCenter.current()
     private let log = Logger(subsystem: "studio.noisyneighbor.earshot", category: "notifications")
-    private static let callCategory = "call"
-    private static let callRequest = "call-detected"
-    private static let takeNotesAction = "take-notes"
 
     override init() {
         super.init()
         center.delegate = self
-        center.setNotificationCategories([
-            UNNotificationCategory(
-                identifier: Self.callCategory,
-                actions: [
-                    UNNotificationAction(identifier: Self.takeNotesAction, title: String(localized: "Record Meeting"), options: []),
-                    UNNotificationAction(identifier: "not-now", title: String(localized: "Not Now"), options: []),
-                ],
-                intentIdentifiers: [])
-        ])
-    }
-
-    func callDetected(_ call: DetectedCall) {
-        let content = UNMutableNotificationContent()
-        content.title = String(localized: "\(call.platform.name) call detected")
-        content.body = String(localized: "Record and summarize it with Earshot? Let others know you're transcribing.")
-        content.categoryIdentifier = Self.callCategory
-        post(UNNotificationRequest(identifier: Self.callRequest, content: content, trigger: nil))
-    }
-
-    func clearCallPrompt() {
-        center.removeDeliveredNotifications(withIdentifiers: [Self.callRequest])
     }
 
     func notesReady(_ meeting: Meeting) {
@@ -72,16 +48,9 @@ extension Notifier: UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse
     ) async {
-        let action = response.actionIdentifier
-        let category = response.notification.request.content.categoryIdentifier
-        let meeting = (response.notification.request.content.userInfo["meeting"] as? String).flatMap(UUID.init)
-        await MainActor.run {
-            if category == Self.callCategory, action == Self.takeNotesAction || action == UNNotificationDefaultActionIdentifier {
-                onTakeNotes?()
-            } else if let meeting {
-                onOpenMeeting?(meeting)
-            }
-        }
+        guard let meeting = (response.notification.request.content.userInfo["meeting"] as? String).flatMap(UUID.init)
+        else { return }
+        await MainActor.run { onOpenMeeting?(meeting) }
     }
 
     nonisolated func userNotificationCenter(

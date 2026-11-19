@@ -3,6 +3,7 @@ import SwiftUI
 
 /// A floating bar at the bottom of the screen while a meeting or note records (including
 /// automatic recordings): what's recording, for how long, who's talking, and Stop.
+/// In Ask mode it also offers to record a detected call.
 /// Clickable, but it never takes focus away from the app you're in.
 @MainActor
 final class RecordingPanel {
@@ -45,6 +46,26 @@ private struct RecordingPill: View {
     private var recorder: MeetingRecorder { model.recorder }
 
     var body: some View {
+        Group {
+            if recorder.state == .idle, let call = model.callPrompt {
+                CallPromptContent(model: model, call: call)
+            } else {
+                recording
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.leading, 16)
+        .padding(.trailing, 10)
+        .frame(height: 48)
+        .frame(maxWidth: 460)
+        .background(Color(white: 0.11, opacity: 0.88), in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.14)))
+        .shadow(color: .black.opacity(0.25), radius: 14, y: 6)
+        .environment(\.colorScheme, .dark)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var recording: some View {
         HStack(spacing: 12) {
             if recorder.state == .summarizing {
                 ProgressView().controlSize(.small).tint(.white)
@@ -93,16 +114,6 @@ private struct RecordingPill: View {
                 .help(Text("Stop and write notes"))
             }
         }
-        .foregroundStyle(.white)
-        .padding(.leading, 16)
-        .padding(.trailing, 10)
-        .frame(height: 48)
-        .frame(maxWidth: 460)
-        .background(Color(white: 0.11, opacity: 0.88), in: Capsule())
-        .overlay(Capsule().strokeBorder(.white.opacity(0.14)))
-        .shadow(color: .black.opacity(0.25), radius: 14, y: 6)
-        .environment(\.colorScheme, .dark)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder private var detail: some View {
@@ -125,6 +136,48 @@ private struct RecordingPill: View {
             Text("Claude is writing notes…")
         case .idle:
             EmptyView()
+        }
+    }
+}
+
+/// "Zoom call detected · Not Now · Record".
+private struct CallPromptContent: View {
+    let model: AppModel
+    let call: DetectedCall
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "phone.fill")
+                .foregroundStyle(Theme.detected)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(call.platform.name) call detected")
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                Text("Record and summarize it? Let others know you're transcribing.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button("Not Now") { model.dismissCallPrompt() }
+                .buttonStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.7))
+
+            Button {
+                model.recordMeeting()
+            } label: {
+                Label("Record", systemImage: "record.circle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 12)
+                    .frame(height: 28)
+                    .background(Theme.recording, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .help(Text("Record the call and write notes"))
         }
     }
 }
