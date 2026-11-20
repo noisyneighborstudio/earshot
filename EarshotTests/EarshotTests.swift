@@ -430,8 +430,8 @@ struct FoundationTests {
         store.save(first)
         store.save(second)
 
-        // Order of the arguments doesn't matter: the earlier one is kept.
-        let kept = store.combine(second.id, with: first.id)
+        // Order of the ids doesn't matter: the earliest one is kept.
+        let kept = store.combine([second.id, first.id])
         #expect(kept == first.id)
         #expect(store.meetings.count == 1)
         let merged = store.meetings[0]
@@ -441,7 +441,18 @@ struct FoundationTests {
         #expect(merged.participants == ["Ana", "Ben"])
         #expect(merged.isStarred)
         #expect(merged.summary == nil)
-        #expect(store.combine(first.id, with: first.id) == nil)
+        #expect(store.combine([first.id]) == nil)
+
+        // Three at once fold in time order.
+        var third = Meeting(title: "Part 3", platform: "Zoom", startedAt: first.startedAt.addingTimeInterval(2000))
+        third.lines = [.init(speaker: .me, start: 1, text: "wrap up")]
+        var zeroth = Meeting(title: "Part 0", platform: "Zoom", startedAt: first.startedAt.addingTimeInterval(-100))
+        zeroth.lines = [.init(speaker: .me, start: 0, text: "hello")]
+        store.save(third)
+        store.save(zeroth)
+        #expect(store.combine([first.id, third.id, zeroth.id]) == zeroth.id)
+        #expect(store.meetings.map(\.id) == [zeroth.id])
+        #expect(store.meetings[0].lines.map(\.text) == ["hello", "first half", "second half", "wrap up"])
     }
 
     @Test func renameStarMoveAndUndoDelete() {

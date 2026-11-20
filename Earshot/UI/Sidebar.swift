@@ -16,6 +16,29 @@ enum SidebarItem: Hashable {
         return .section(navigation.section)
     }
 
+    var meetingID: Meeting.ID? {
+        if case .meeting(let id) = self { return id }
+        return nil
+    }
+
+    /// The sidebar's selection: several meetings at once, or the one current row.
+    @MainActor
+    static func selection(_ navigation: AppNavigation) -> Set<SidebarItem> {
+        navigation.selectedMeetings.count > 1 ? Set(navigation.selectedMeetings.map(SidebarItem.meeting)) : [current(navigation)]
+    }
+
+    @MainActor
+    static func select(_ items: Set<SidebarItem>, in navigation: AppNavigation) {
+        let meetings = items.compactMap(\.meetingID)
+        if meetings.count > 1 {
+            navigation.section = .meetings
+            navigation.meetingID = nil
+            navigation.selectedMeetings = Set(meetings)
+        } else if let item = items.first(where: { $0 != current(navigation) }) ?? items.first {
+            item.apply(to: navigation)
+        }
+    }
+
     @MainActor
     func apply(to navigation: AppNavigation) {
         switch self {
@@ -50,7 +73,7 @@ struct AppSidebar: View {
         let recent = Array(MeetingQuery.apply(meetings, filter: recentFilter, query: "").prefix(Self.recentLimit))
         let starred = MeetingQuery.apply(meetings, filter: .starred, query: "")
 
-        List(selection: Binding(get: { SidebarItem.current(navigation) }, set: { $0?.apply(to: navigation) })) {
+        List(selection: Binding(get: { SidebarItem.selection(navigation) }, set: { SidebarItem.select($0, in: navigation) })) {
             Section {
                 ForEach(AppSection.allCases) { section in
                     HStack(spacing: 10) {

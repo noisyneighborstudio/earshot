@@ -149,15 +149,14 @@ final class MeetingStore {
         update(id) { $0.title = title }
     }
 
-    /// Folds the later of the two meetings into the earlier one and deletes it. Returns the kept id.
+    /// Folds the meetings, in time order, into the earliest one and deletes the rest. Returns the kept id.
     @discardableResult
-    func combine(_ a: Meeting.ID, with b: Meeting.ID) -> Meeting.ID? {
-        guard a != b, let one = meetings.first(where: { $0.id == a }), let two = meetings.first(where: { $0.id == b })
-        else { return nil }
-        let (earlier, later) = one.startedAt <= two.startedAt ? (one, two) : (two, one)
-        save(earlier.combined(with: later))
-        delete(later.id)
-        return earlier.id
+    func combine(_ ids: [Meeting.ID]) -> Meeting.ID? {
+        let parts = meetings.filter { ids.contains($0.id) }.sorted { $0.startedAt < $1.startedAt }
+        guard parts.count > 1, let first = parts.first else { return nil }
+        save(parts.dropFirst().reduce(first) { $0.combined(with: $1) })
+        for part in parts.dropFirst() { delete(part.id) }
+        return first.id
     }
 
     func toggleStar(_ id: Meeting.ID) { update(id) { $0.starred = !$0.isStarred } }

@@ -34,9 +34,11 @@ enum MeetingFilter: Hashable, Sendable {
 @MainActor
 @Observable
 final class AppNavigation {
-    var section: AppSection = .home
+    var section: AppSection = .home { didSet { selectedMeetings = [] } }
     /// Selected meeting within the Meetings section.
-    var meetingID: Meeting.ID?
+    var meetingID: Meeting.ID? { didSet { if meetingID != nil { selectedMeetings = [] } } }
+    /// Two or more meetings picked together in the sidebar (⌘- or ⇧-click).
+    var selectedMeetings: Set<Meeting.ID> = []
     var filter: MeetingFilter = .all
     var query = ""
 }
