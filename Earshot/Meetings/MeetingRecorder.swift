@@ -189,6 +189,13 @@ final class MeetingRecorder {
             do { mine = try await me.segments } catch { problems.append(error.localizedDescription) }
             do { theirs = try await others?.segments ?? [] } catch { problems.append(error.localizedDescription) }
             meeting.lines = Meeting.lines(me: mine, others: theirs, speakers: timeline)
+            if meeting.isDiscardable {
+                log.info("discarding empty recording \(meeting.id, privacy: .public)")
+                store.delete(meeting.id)
+                current = nil
+                state = .idle
+                return
+            }
             store.save(meeting)
             current = meeting
 

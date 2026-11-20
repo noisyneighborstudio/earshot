@@ -390,6 +390,31 @@ struct FoundationTests {
         return m
     }
 
+    @Test func discardsEmptyAndTooShortRecordings() {
+        func recording(seconds: TimeInterval, words: Int, note: Bool = false, starred: Bool = false) -> Meeting {
+            var m = Meeting(title: "Call", platform: "Zoom", startedAt: .now)
+            m.endedAt = m.startedAt.addingTimeInterval(seconds)
+            m.kind = note ? .note : .meeting
+            m.starred = starred
+            if words > 0 { m.lines = [.init(speaker: .others, start: 0, text: Array(repeating: "word", count: words).joined(separator: " "))] }
+            return m
+        }
+        #expect(recording(seconds: 1800, words: 0).isDiscardable)
+        #expect(recording(seconds: 20, words: 5).isDiscardable)
+        #expect(!recording(seconds: 20, words: 40).isDiscardable)
+        #expect(!recording(seconds: 300, words: 5).isDiscardable)
+        #expect(!recording(seconds: 10, words: 3, note: true).isDiscardable)
+        #expect(!recording(seconds: 1800, words: 0, starred: true).isDiscardable)
+
+        // Existing empty ones are cleaned up when the store loads.
+        let store = tempStore()
+        let empty = recording(seconds: 600, words: 0), kept = recording(seconds: 600, words: 50)
+        store.save(empty)
+        store.save(kept)
+        let reloaded = MeetingStore(directory: store.fileURL(for: kept.id).deletingLastPathComponent())
+        #expect(reloaded.meetings.map(\.id) == [kept.id])
+    }
+
     @Test func renameStarMoveAndUndoDelete() {
         let store = tempStore()
         let m = meeting("Standup")

@@ -30,6 +30,14 @@ extension Meeting {
         return Double(shared) / Double(mine.count) >= 0.7
     }
 
+    /// Nothing worth keeping: no words at all, or a call that ended almost as soon as it began.
+    /// Starred meetings are always kept.
+    var isDiscardable: Bool {
+        guard !isStarred else { return false }
+        if wordCount == 0 { return true }
+        return !isNote && (duration ?? 0) < 60 && wordCount < 20
+    }
+
     private static func words(_ text: String) -> [String] {
         text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
     }
@@ -60,6 +68,10 @@ final class MeetingStore {
             savedFolders = (try? JSONDecoder().decode([String].self, from: data)) ?? []
         }
         recoverInterrupted()
+        for meeting in meetings where meeting.isDiscardable {
+            log.info("discarding empty meeting \(meeting.id, privacy: .public)")
+            delete(meeting.id)
+        }
     }
 
     /// Meetings left without an end (Earshot was killed or crashed mid-recording) get closed out
@@ -67,9 +79,7 @@ final class MeetingStore {
     private func recoverInterrupted() {
         for var meeting in meetings where meeting.endedAt == nil {
             meeting.endedAt = meeting.startedAt.addingTimeInterval(meeting.lines.last.map { $0.start + 5 } ?? 0)
-            meeting.summaryError = meeting.lines.isEmpty
-                ? String(localized: "Recording was interrupted before anything was transcribed.")
-                : String(localized: "Recording was interrupted. The transcript up to that point was saved.")
+            meeting.summaryError = String(localized: "Recording was interrupted. The transcript up to that point was saved.")
             log.info("recovered interrupted meeting \(meeting.id, privacy: .public)")
             save(meeting)
         }
