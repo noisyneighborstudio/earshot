@@ -21,6 +21,12 @@ final class MeetingRecorder {
     private(set) var speakingNow: [String] = []
     /// Still-changing text per stream, shown after the final lines.
     private(set) var pending: [Meeting.Speaker: String] = [:]
+    /// The live "Me" line, hidden while it's the mic hearing the call through the speakers.
+    var pendingMine: String? {
+        guard let mine = pending[.me] else { return nil }
+        let heard = [pending[.others]].compactMap { $0 } + liveOthers.suffix(3).map(\.text)
+        return Meeting.isEcho(mine, of: heard) ? nil : mine
+    }
     /// The mic's 0...1 level while recording, so a voice note shows it's hearing you.
     private(set) var micLevel: Float = 0
 

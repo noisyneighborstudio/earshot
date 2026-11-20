@@ -16,11 +16,16 @@ extension Meeting {
     /// Without headphones the mic hears the call too. A mic segment of 3+ words whose words mostly
     /// appear in call audio around the same time is that echo, not the user.
     static func isEcho(_ segment: TranscriptSegment, of others: [TranscriptSegment], window: TimeInterval = 3) -> Bool {
-        let mine = words(segment.text)
-        guard mine.count >= 3 else { return false }
-        let nearby = others
+        isEcho(segment.text, of: others
             .filter { $0.end >= segment.start - window && $0.start <= segment.end + window }
-            .reduce(into: Set<String>()) { $0.formUnion(words($1.text)) }
+            .map(\.text))
+    }
+
+    /// Text-only check for live lines, which have no timing yet: `heard` is what the call just said.
+    static func isEcho(_ text: String, of heard: [String]) -> Bool {
+        let mine = words(text)
+        guard mine.count >= 3 else { return false }
+        let nearby = heard.reduce(into: Set<String>()) { $0.formUnion(words($1)) }
         let shared = mine.filter(nearby.contains).count
         return Double(shared) / Double(mine.count) >= 0.7
     }

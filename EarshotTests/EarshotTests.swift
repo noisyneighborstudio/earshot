@@ -363,6 +363,12 @@ struct EchoTests {
         #expect(lines.map(\.speaker) == [.others, .me])
     }
 
+    @Test func dropsLiveEchoOfWhatTheCallJustSaid() {
+        let heard = ["in theory you should be able to find it in the app.halifax.gov but I have to go through. I have to figure out I"]
+        #expect(Meeting.isEcho("in theory you should be able to find it in the app.halifax.gov but I have to go through. I have to figure", of: heard))
+        #expect(!Meeting.isEcho("Sorry, which portal was that again?", of: heard))
+    }
+
     @Test func keepsSameWordsFarApartInTime() {
         let others = [TranscriptSegment(start: 0, end: 4, text: "Let's ship the release Friday")]
         let later = TranscriptSegment(start: 60, end: 63, text: "So we ship the release Friday")

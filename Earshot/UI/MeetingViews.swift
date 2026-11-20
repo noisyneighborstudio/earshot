@@ -402,7 +402,7 @@ struct LiveMeetingView: View {
 
     private var pendingLines: [(name: String, color: Color, text: String)] {
         var lines: [(String, Color, String)] = []
-        if let mine = recorder.pending[.me] { lines.append((String(localized: "Me"), Theme.me, mine)) }
+        if let mine = recorder.pendingMine { lines.append((String(localized: "Me"), Theme.me, mine)) }
         if let theirs = recorder.pending[.others] {
             let name = recorder.speakingNow.first
             lines.append((name ?? String(localized: "Others"),
