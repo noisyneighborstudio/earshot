@@ -166,6 +166,27 @@ final class MeetingActions {
         model.navigation.meetingID = meeting.id
     }
 
+    /// Merges the transcripts into the earliest meeting, opens it and writes fresh notes.
+    func combine(_ ids: [Meeting.ID], model: AppModel) {
+        guard canCombine(ids, model: model), let kept = model.meetings.combine(ids) else { return }
+        select(kept, navigation: model.navigation)
+        model.recorder.resummarize(kept)
+    }
+
+    /// Not while anything is recording or being summarized: those meetings are still changing.
+    func canCombine(_ ids: some Collection<Meeting.ID>, model: AppModel) -> Bool {
+        ids.count > 1 && model.recorder.state == .idle
+    }
+
+    /// Meetings worth offering to combine with: the closest in time, with a transcript.
+    static func combineCandidates(for meeting: Meeting, in meetings: [Meeting], busy: Meeting.ID?) -> [Meeting] {
+        meetings
+            .filter { $0.id != meeting.id && $0.id != busy && !$0.lines.isEmpty && $0.endedAt != nil }
+            .sorted { abs($0.startedAt.timeIntervalSince(meeting.startedAt)) < abs($1.startedAt.timeIntervalSince(meeting.startedAt)) }
+            .prefix(8)
+            .map { $0 }
+    }
+
     func select(_ id: Meeting.ID, navigation: AppNavigation) {
         navigation.section = .meetings
         navigation.meetingID = id
@@ -180,7 +201,14 @@ struct MeetingActionsMenu: View {
     /// The meeting being recorded or summarized can't be edited away from under the recorder.
     private var isBusy: Bool { model.recorder.current?.id == meeting.id }
 
+    private var selection: Set<Meeting.ID> { model.navigation.selectedMeetings }
+
     var body: some View {
+        if selection.count > 1, selection.contains(meeting.id) {
+            Button("Combine \(selection.count) Meetings") { actions.combine(Array(selection), model: model) }
+                .disabled(!actions.canCombine(selection, model: model))
+            Divider()
+        }
         Button("Rename…") { actions.beginRename(meeting) }.disabled(isBusy)
         Button(meeting.isStarred ? "Unstar" : "Star") { model.meetings.toggleStar(meeting.id) }
             .keyboardShortcut("d", modifiers: .command)
@@ -192,6 +220,15 @@ struct MeetingActionsMenu: View {
         Divider()
         Button("Regenerate Notes") { model.recorder.resummarize(meeting.id) }
             .disabled(model.recorder.state != .idle || meeting.lines.isEmpty)
+        Menu("Combine With") {
+            ForEach(MeetingActions.combineCandidates(
+                for: meeting, in: model.meetings.meetings, busy: model.recorder.current?.id)) { other in
+                Button("\(other.title) · \(other.startedAt.formatted(date: .abbreviated, time: .shortened))") {
+                    actions.combine([meeting.id, other.id], model: model)
+                }
+            }
+        }
+        .disabled(isBusy || model.recorder.state != .idle || meeting.lines.isEmpty)
         Menu("Move to Folder") {
             ForEach(model.meetings.folders, id: \.self) { folder in
                 Toggle(folder, isOn: Binding(
@@ -219,7 +256,9 @@ struct MeetingsSection: View {
     let model: AppModel
 
     var body: some View {
-        if let id = model.navigation.meetingID, let meeting = meeting(id) {
+        if model.navigation.selectedMeetings.count > 1 {
+            MeetingSelectionView(model: model)
+        } else if let id = model.navigation.meetingID, let meeting = meeting(id) {
             if model.recorder.current?.id == id && model.recorder.state == .recording {
                 LiveMeetingView(meeting: meeting, recorder: model.recorder)
             } else {
@@ -233,6 +272,37 @@ struct MeetingsSection: View {
     /// The live copy while recording or summarizing, else the saved one.
     private func meeting(_ id: Meeting.ID) -> Meeting? {
         model.recorder.current?.id == id ? model.recorder.current : model.meetings.meetings.first { $0.id == id }
+    }
+}
+
+/// Several meetings picked in the sidebar: what's selected, and combining them.
+private struct MeetingSelectionView: View {
+    let model: AppModel
+
+    private var selected: [Meeting] {
+        model.meetings.meetings.filter { model.navigation.selectedMeetings.contains($0.id) }
+            .sorted { $0.startedAt < $1.startedAt }
+    }
+
+    var body: some View {
+        let selected = selected
+        VStack(alignment: .leading, spacing: 16) {
+            Text("\(selected.count) meetings selected").font(.system(size: 24, weight: .bold))
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(selected) { MeetingRow(meeting: $0, recorder: model.recorder) }
+            }
+            Button("Combine \(selected.count) Meetings") {
+                model.meetingActions.combine(selected.map(\.id), model: model)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!model.meetingActions.canCombine(selected.map(\.id), model: model))
+            Text("Transcripts are joined in time order into the earliest meeting, the others are removed, and the notes are rewritten.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

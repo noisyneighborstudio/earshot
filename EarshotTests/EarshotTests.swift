@@ -415,6 +415,46 @@ struct FoundationTests {
         #expect(reloaded.meetings.map(\.id) == [kept.id])
     }
 
+    @Test func combinesTwoMeetingsIntoTheEarlierOne() {
+        let store = tempStore()
+        var first = Meeting(title: "Part 1", platform: "Zoom", startedAt: .now)
+        first.endedAt = first.startedAt.addingTimeInterval(600)
+        first.lines = [.init(speaker: .me, start: 10, text: "first half")]
+        first.summary = "old notes"
+        first.participants = ["Ana"]
+        var second = Meeting(title: "Part 2", platform: "Zoom", startedAt: first.startedAt.addingTimeInterval(900))
+        second.endedAt = second.startedAt.addingTimeInterval(300)
+        second.lines = [.init(speaker: .others, start: 5, text: "second half")]
+        second.participants = ["Ben", "Ana"]
+        second.starred = true
+        store.save(first)
+        store.save(second)
+
+        // Order of the ids doesn't matter: the earliest one is kept.
+        let kept = store.combine([second.id, first.id])
+        #expect(kept == first.id)
+        #expect(store.meetings.count == 1)
+        let merged = store.meetings[0]
+        #expect(merged.lines.map(\.text) == ["first half", "second half"])
+        #expect(merged.lines.map(\.start) == [10, 905])
+        #expect(merged.endedAt == second.endedAt)
+        #expect(merged.participants == ["Ana", "Ben"])
+        #expect(merged.isStarred)
+        #expect(merged.summary == nil)
+        #expect(store.combine([first.id]) == nil)
+
+        // Three at once fold in time order.
+        var third = Meeting(title: "Part 3", platform: "Zoom", startedAt: first.startedAt.addingTimeInterval(2000))
+        third.lines = [.init(speaker: .me, start: 1, text: "wrap up")]
+        var zeroth = Meeting(title: "Part 0", platform: "Zoom", startedAt: first.startedAt.addingTimeInterval(-100))
+        zeroth.lines = [.init(speaker: .me, start: 0, text: "hello")]
+        store.save(third)
+        store.save(zeroth)
+        #expect(store.combine([first.id, third.id, zeroth.id]) == zeroth.id)
+        #expect(store.meetings.map(\.id) == [zeroth.id])
+        #expect(store.meetings[0].lines.map(\.text) == ["hello", "first half", "second half", "wrap up"])
+    }
+
     @Test func renameStarMoveAndUndoDelete() {
         let store = tempStore()
         let m = meeting("Standup")

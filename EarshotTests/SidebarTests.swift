@@ -90,3 +90,27 @@ struct SidebarSelectionTests {
         #expect(SidebarItem.current(navigation) == .section(.meetings))
     }
 }
+
+@MainActor
+struct SidebarMultiSelectTests {
+    @Test func selectingSeveralMeetingsThenOneGoesBackToSingle() {
+        let navigation = AppNavigation()
+        let a = UUID(), b = UUID(), c = UUID()
+        SidebarItem.select([.meeting(a)], in: navigation)
+        #expect(navigation.meetingID == a)
+
+        SidebarItem.select([.meeting(a), .meeting(b), .meeting(c)], in: navigation)
+        #expect(navigation.selectedMeetings == [a, b, c])
+        #expect(navigation.meetingID == nil)
+        #expect(SidebarItem.selection(navigation) == [.meeting(a), .meeting(b), .meeting(c)])
+
+        SidebarItem.select([.meeting(b)], in: navigation)
+        #expect(navigation.meetingID == b)
+        #expect(navigation.selectedMeetings.isEmpty)
+
+        // Navigating anywhere else drops a multi-selection.
+        SidebarItem.select([.meeting(a), .meeting(c)], in: navigation)
+        navigation.section = .home
+        #expect(navigation.selectedMeetings.isEmpty)
+    }
+}

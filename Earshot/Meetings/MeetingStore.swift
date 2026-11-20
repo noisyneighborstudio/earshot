@@ -38,6 +38,24 @@ extension Meeting {
         return !isNote && (duration ?? 0) < 60 && wordCount < 20
     }
 
+    /// This meeting followed by `later` as one: lines on one timeline, notes cleared for a re-summarize.
+    func combined(with later: Meeting) -> Meeting {
+        var merged = self
+        let offset = later.startedAt.timeIntervalSince(startedAt)
+        merged.lines = (lines + later.lines.map { var line = $0; line.start += offset; return line })
+            .sorted { $0.start < $1.start }
+        merged.endedAt = [endedAt, later.endedAt].compactMap { $0 }.max()
+        let people = Set((participants ?? []) + (later.participants ?? []))
+        merged.participants = people.isEmpty ? nil : people.sorted()
+        if platform.isEmpty { merged.platform = later.platform }
+        if kind != .meeting, later.kind == .meeting { merged.kind = .meeting }
+        if later.isStarred { merged.starred = true }
+        merged.folder = folder ?? later.folder
+        merged.summary = nil
+        merged.summaryError = nil
+        return merged
+    }
+
     private static func words(_ text: String) -> [String] {
         text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
     }
@@ -129,6 +147,16 @@ final class MeetingStore {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
         update(id) { $0.title = title }
+    }
+
+    /// Folds the meetings, in time order, into the earliest one and deletes the rest. Returns the kept id.
+    @discardableResult
+    func combine(_ ids: [Meeting.ID]) -> Meeting.ID? {
+        let parts = meetings.filter { ids.contains($0.id) }.sorted { $0.startedAt < $1.startedAt }
+        guard parts.count > 1, let first = parts.first else { return nil }
+        save(parts.dropFirst().reduce(first) { $0.combined(with: $1) })
+        for part in parts.dropFirst() { delete(part.id) }
+        return first.id
     }
 
     func toggleStar(_ id: Meeting.ID) { update(id) { $0.starred = !$0.isStarred } }
