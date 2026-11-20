@@ -219,14 +219,23 @@ private struct ActionItemRow: View {
                 }
             }
             Spacer(minLength: 8)
-            if showOwner, let owner = item.owner {
-                Chip(text: owner, color: color(for: owner), bold: true)
+            if showOwner {
+                OwnerMenu(owner: item.owner, assignees: assignees, participants: participants) {
+                    model.meetings.setOwner(item, to: $0)
+                }
+            }
+        }
+        .contextMenu {
+            Menu("Assign To") {
+                ForEach(assignees, id: \.self) { name in
+                    Button(name) { model.meetings.setOwner(item, to: name) }
+                }
             }
         }
     }
 
-    private func color(for owner: String) -> Color {
-        let participants = model.meetings.meetings.first { $0.id == item.meetingID }?.participants ?? []
-        return Theme.color(forName: owner, participants: participants)
-    }
+    private var meeting: Meeting? { model.meetings.meetings.first { $0.id == item.meetingID } }
+    private var participants: [String] { meeting?.participants ?? [] }
+    private var assignees: [String] { meeting?.assignees ?? ["Me", "Unassigned"] }
+
 }

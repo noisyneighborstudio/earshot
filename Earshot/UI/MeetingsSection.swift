@@ -74,6 +74,8 @@ final class MeetingActions {
         /// New folder, optionally moving a meeting into it.
         case newFolder(moving: Meeting.ID?)
         case renameFolder(String)
+        case addParticipant(Meeting.ID)
+        case renameParticipant(Meeting.ID, String)
     }
 
     var prompt: Prompt?
@@ -96,6 +98,16 @@ final class MeetingActions {
         prompt = .newFolder(moving: id)
     }
 
+    func beginAddParticipant(to id: Meeting.ID) {
+        promptText = ""
+        prompt = .addParticipant(id)
+    }
+
+    func beginRenameParticipant(_ name: String, in id: Meeting.ID) {
+        promptText = name
+        prompt = .renameParticipant(id, name)
+    }
+
     func beginRenameFolder(_ name: String) {
         promptText = name
         prompt = .renameFolder(name)
@@ -114,6 +126,10 @@ final class MeetingActions {
         case .renameFolder(let old):
             model.meetings.renameFolder(old, to: text)
             if model.navigation.filter == .folder(old) { model.navigation.filter = .folder(text) }
+        case .addParticipant(let id):
+            model.meetings.addParticipant(text, to: id)
+        case .renameParticipant(let id, let old):
+            model.meetings.renameParticipant(old, to: text, in: id)
         }
     }
 

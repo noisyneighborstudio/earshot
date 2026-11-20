@@ -455,6 +455,39 @@ struct FoundationTests {
         #expect(store.meetings[0].lines.map(\.text) == ["hello", "first half", "second half", "wrap up"])
     }
 
+    @Test func editsParticipantsAndReassignsActionItems() {
+        var m = Meeting(title: "Sync", platform: "Zoom", startedAt: .now)
+        m.participants = ["Jon"]
+        m.lines = [.init(speaker: .others, start: 0, text: "I'll send it", name: "Jon")]
+        m.summary = "# Sync\n## Action items\n- [ ] Jon: send the deck\n- [x] Unassigned: book room\n  - [ ] Me: review"
+
+        m.renameParticipant("Jon", to: "John Smith")
+        #expect(m.participants == ["John Smith"])
+        #expect(m.lines[0].name == "John Smith")
+        #expect(m.actionItems.map(\.owner) == ["John Smith", "Unassigned", "Me"])
+
+        m.addParticipant("  Ana ")
+        m.addParticipant("Ana")
+        m.addParticipant("Me")
+        #expect(m.participants == ["John Smith", "Ana"])
+        #expect(m.assignees == ["Me", "John Smith", "Ana", "Unassigned"])
+
+        // Reassigning keeps the checkbox state, the indent and the task text.
+        let booked = m.actionItems[1], review = m.actionItems[2]
+        m.setOwner(atLine: booked.line, to: "Ana")
+        m.setOwner(atLine: review.line, to: "John Smith")
+        #expect(m.summary == "# Sync\n## Action items\n- [ ] John Smith: send the deck\n- [x] Ana: book room\n  - [ ] John Smith: review")
+
+        // A task written without an owner gets one.
+        m.summary = "- [ ] call the venue"
+        m.setOwner(atLine: 0, to: "Ana")
+        #expect(m.summary == "- [ ] Ana: call the venue")
+
+        m.removeParticipant("Ana")
+        m.removeParticipant("John Smith")
+        #expect(m.participants == nil)
+    }
+
     @Test func renameStarMoveAndUndoDelete() {
         let store = tempStore()
         let m = meeting("Standup")

@@ -106,7 +106,7 @@ struct MeetingNotesView: View {
                             Spacer(minLength: 12)
                             actions
                         }
-                        MeetingMeta(meeting: meeting)
+                        MeetingMeta(meeting: meeting, model: model, isBusy: isBusy)
                     }
                     if let error = meeting.summaryError, !isSummarizing {
                         Label {
@@ -120,9 +120,10 @@ struct MeetingNotesView: View {
                     if isSummarizing {
                         Label("Claude is writing notes…", systemImage: "sparkles").foregroundStyle(.secondary)
                     } else if let notes {
-                        NotesMarkdown(markdown: notes.body, participants: meeting.participants ?? []) { index in
-                            toggle(bodyLine: index)
-                        }
+                        NotesMarkdown(
+                            markdown: notes.body, participants: meeting.participants ?? [], assignees: meeting.assignees,
+                            onToggle: { index in edit { $0.toggleTask(atLine: summaryLine(forBody: index)) } },
+                            onAssign: { index, owner in edit { $0.setOwner(atLine: summaryLine(forBody: index), to: owner) } })
                     }
                     Text("Transcribed on this Mac · Notes written by Claude")
                         .font(.caption2)
@@ -182,19 +183,24 @@ struct MeetingNotesView: View {
     }
 
     /// The body drops the title line, so its line numbers are offset by one in the saved notes.
-    private func toggle(bodyLine index: Int) {
-        guard let summary = meeting.summary else { return }
-        let lines = summary.components(separatedBy: "\n")
+    private func summaryLine(forBody index: Int) -> Int {
+        let lines = (meeting.summary ?? "").components(separatedBy: "\n")
         let titleIndex = lines.firstIndex { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        let offset = titleIndex.map { lines[$0].hasPrefix("# ") && $0 <= index ? 1 : 0 } ?? 0
+        return index + (titleIndex.map { lines[$0].hasPrefix("# ") && $0 <= index ? 1 : 0 } ?? 0)
+    }
+
+    private func edit(_ change: (inout Meeting) -> Void) {
         var updated = meeting
-        updated.toggleTask(atLine: index + offset)
+        change(&updated)
         store.save(updated)
     }
 }
 
 private struct MeetingMeta: View {
     let meeting: Meeting
+    let model: AppModel
+    let isBusy: Bool
+    private var actions: MeetingActions { model.meetingActions }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -203,8 +209,25 @@ private struct MeetingMeta: View {
             Chip(text: String(localized: "Me"), color: Theme.me)
             ForEach(meeting.participants ?? [], id: \.self) { name in
                 Chip(text: name, color: Theme.color(forName: name, participants: meeting.participants ?? []))
+                    .contextMenu {
+                        Button("Rename…") { actions.beginRenameParticipant(name, in: meeting.id) }
+                        Button("Remove", role: .destructive) { model.meetings.removeParticipant(name, from: meeting.id) }
+                    }
+            }
+            if !meeting.isNote {
+                Button {
+                    actions.beginAddParticipant(to: meeting.id)
+                } label: {
+                    Image(systemName: "person.badge.plus")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .disabled(isBusy)
+                .help(Text("Add a participant"))
+                .accessibilityLabel(Text("Add Participant"))
             }
         }
+        .disabled(isBusy)
     }
 
     private var when: String {
@@ -220,7 +243,9 @@ private struct MeetingMeta: View {
 private struct NotesMarkdown: View {
     let markdown: String
     let participants: [String]
+    let assignees: [String]
     let onToggle: (Int) -> Void
+    let onAssign: (Int, String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -247,7 +272,7 @@ private struct NotesMarkdown: View {
                 Toggle(isOn: Binding(get: { done }, set: { _ in onToggle(index) })) { EmptyView() }
                     .toggleStyle(.checkbox)
                     .labelsHidden()
-                if let owner { Chip(text: owner, color: Theme.color(forName: owner, participants: participants), bold: true) }
+                OwnerMenu(owner: owner, assignees: assignees, participants: participants) { onAssign(index, $0) }
                 inline(task).strikethrough(done).foregroundStyle(done ? .secondary : .primary)
             }
         } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
