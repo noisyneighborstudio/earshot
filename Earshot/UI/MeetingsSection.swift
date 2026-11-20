@@ -166,6 +166,22 @@ final class MeetingActions {
         model.navigation.meetingID = meeting.id
     }
 
+    /// Merges the two transcripts into the earlier meeting, opens it and writes fresh notes.
+    func combine(_ id: Meeting.ID, with other: Meeting.ID, model: AppModel) {
+        guard let kept = model.meetings.combine(id, with: other) else { return }
+        select(kept, navigation: model.navigation)
+        model.recorder.resummarize(kept)
+    }
+
+    /// Meetings worth offering to combine with: the closest in time, with a transcript.
+    static func combineCandidates(for meeting: Meeting, in meetings: [Meeting], busy: Meeting.ID?) -> [Meeting] {
+        meetings
+            .filter { $0.id != meeting.id && $0.id != busy && !$0.lines.isEmpty && $0.endedAt != nil }
+            .sorted { abs($0.startedAt.timeIntervalSince(meeting.startedAt)) < abs($1.startedAt.timeIntervalSince(meeting.startedAt)) }
+            .prefix(8)
+            .map { $0 }
+    }
+
     func select(_ id: Meeting.ID, navigation: AppNavigation) {
         navigation.section = .meetings
         navigation.meetingID = id
@@ -192,6 +208,15 @@ struct MeetingActionsMenu: View {
         Divider()
         Button("Regenerate Notes") { model.recorder.resummarize(meeting.id) }
             .disabled(model.recorder.state != .idle || meeting.lines.isEmpty)
+        Menu("Combine With") {
+            ForEach(MeetingActions.combineCandidates(
+                for: meeting, in: model.meetings.meetings, busy: model.recorder.current?.id)) { other in
+                Button("\(other.title) · \(other.startedAt.formatted(date: .abbreviated, time: .shortened))") {
+                    actions.combine(meeting.id, with: other.id, model: model)
+                }
+            }
+        }
+        .disabled(isBusy || model.recorder.state != .idle || meeting.lines.isEmpty)
         Menu("Move to Folder") {
             ForEach(model.meetings.folders, id: \.self) { folder in
                 Toggle(folder, isOn: Binding(

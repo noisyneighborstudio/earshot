@@ -38,6 +38,24 @@ extension Meeting {
         return !isNote && (duration ?? 0) < 60 && wordCount < 20
     }
 
+    /// This meeting followed by `later` as one: lines on one timeline, notes cleared for a re-summarize.
+    func combined(with later: Meeting) -> Meeting {
+        var merged = self
+        let offset = later.startedAt.timeIntervalSince(startedAt)
+        merged.lines = (lines + later.lines.map { var line = $0; line.start += offset; return line })
+            .sorted { $0.start < $1.start }
+        merged.endedAt = [endedAt, later.endedAt].compactMap { $0 }.max()
+        let people = Set((participants ?? []) + (later.participants ?? []))
+        merged.participants = people.isEmpty ? nil : people.sorted()
+        if platform.isEmpty { merged.platform = later.platform }
+        if kind != .meeting, later.kind == .meeting { merged.kind = .meeting }
+        if later.isStarred { merged.starred = true }
+        merged.folder = folder ?? later.folder
+        merged.summary = nil
+        merged.summaryError = nil
+        return merged
+    }
+
     private static func words(_ text: String) -> [String] {
         text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
     }
@@ -129,6 +147,17 @@ final class MeetingStore {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
         update(id) { $0.title = title }
+    }
+
+    /// Folds the later of the two meetings into the earlier one and deletes it. Returns the kept id.
+    @discardableResult
+    func combine(_ a: Meeting.ID, with b: Meeting.ID) -> Meeting.ID? {
+        guard a != b, let one = meetings.first(where: { $0.id == a }), let two = meetings.first(where: { $0.id == b })
+        else { return nil }
+        let (earlier, later) = one.startedAt <= two.startedAt ? (one, two) : (two, one)
+        save(earlier.combined(with: later))
+        delete(later.id)
+        return earlier.id
     }
 
     func toggleStar(_ id: Meeting.ID) { update(id) { $0.starred = !$0.isStarred } }

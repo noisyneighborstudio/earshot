@@ -415,6 +415,35 @@ struct FoundationTests {
         #expect(reloaded.meetings.map(\.id) == [kept.id])
     }
 
+    @Test func combinesTwoMeetingsIntoTheEarlierOne() {
+        let store = tempStore()
+        var first = Meeting(title: "Part 1", platform: "Zoom", startedAt: .now)
+        first.endedAt = first.startedAt.addingTimeInterval(600)
+        first.lines = [.init(speaker: .me, start: 10, text: "first half")]
+        first.summary = "old notes"
+        first.participants = ["Ana"]
+        var second = Meeting(title: "Part 2", platform: "Zoom", startedAt: first.startedAt.addingTimeInterval(900))
+        second.endedAt = second.startedAt.addingTimeInterval(300)
+        second.lines = [.init(speaker: .others, start: 5, text: "second half")]
+        second.participants = ["Ben", "Ana"]
+        second.starred = true
+        store.save(first)
+        store.save(second)
+
+        // Order of the arguments doesn't matter: the earlier one is kept.
+        let kept = store.combine(second.id, with: first.id)
+        #expect(kept == first.id)
+        #expect(store.meetings.count == 1)
+        let merged = store.meetings[0]
+        #expect(merged.lines.map(\.text) == ["first half", "second half"])
+        #expect(merged.lines.map(\.start) == [10, 905])
+        #expect(merged.endedAt == second.endedAt)
+        #expect(merged.participants == ["Ana", "Ben"])
+        #expect(merged.isStarred)
+        #expect(merged.summary == nil)
+        #expect(store.combine(first.id, with: first.id) == nil)
+    }
+
     @Test func renameStarMoveAndUndoDelete() {
         let store = tempStore()
         let m = meeting("Standup")
