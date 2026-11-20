@@ -222,6 +222,8 @@ struct AppSidebar: View {
         switch actions.prompt {
         case .renameMeeting: String(localized: "Rename Meeting")
         case .renameFolder: String(localized: "Rename Folder")
+        case .addParticipant: String(localized: "Add Participant")
+        case .renameParticipant: String(localized: "Rename Participant")
         case .newFolder, nil: String(localized: "New Folder")
         }
     }
@@ -229,6 +231,7 @@ struct AppSidebar: View {
     private var promptPlaceholder: String {
         switch actions.prompt {
         case .renameMeeting: String(localized: "Meeting title")
+        case .addParticipant, .renameParticipant: String(localized: "Name")
         default: String(localized: "Folder name")
         }
     }
@@ -236,6 +239,7 @@ struct AppSidebar: View {
     private var promptAction: String {
         switch actions.prompt {
         case .newFolder: String(localized: "Create")
+        case .addParticipant: String(localized: "Add")
         default: String(localized: "Rename")
         }
     }

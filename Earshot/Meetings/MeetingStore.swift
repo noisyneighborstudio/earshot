@@ -166,6 +166,11 @@ final class MeetingStore {
         update(id) { $0.folder = folder }
     }
 
+    func setOwner(_ item: ActionItem, to owner: String) { update(item.meetingID) { $0.setOwner(atLine: item.line, to: owner) } }
+    func addParticipant(_ name: String, to id: Meeting.ID) { update(id) { $0.addParticipant(name) } }
+    func removeParticipant(_ name: String, from id: Meeting.ID) { update(id) { $0.removeParticipant(name) } }
+    func renameParticipant(_ old: String, to new: String, in id: Meeting.ID) { update(id) { $0.renameParticipant(old, to: new) } }
+
     func toggleTask(_ item: ActionItem) { update(item.meetingID) { $0.toggleTask(atLine: item.line) } }
 
     // MARK: Folders

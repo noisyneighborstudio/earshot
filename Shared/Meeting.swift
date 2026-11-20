@@ -107,6 +107,41 @@ struct Meeting: Codable, Identifiable, Sendable, Equatable {
         summary = lines.joined(separator: "\n")
     }
 
+    /// Who an action item can belong to: the user, each participant, or nobody yet.
+    var assignees: [String] { ["Me"] + (participants ?? []) + ["Unassigned"] }
+
+    /// Rewrites the owner of the action item on one line of the notes.
+    mutating func setOwner(atLine index: Int, to owner: String) {
+        guard var lines = summary?.components(separatedBy: "\n"), lines.indices.contains(index) else { return }
+        let line = lines[index]
+        guard let box = line.range(of: "- [ ] ") ?? line.range(of: "- [x] ") ?? line.range(of: "- [X] ") else { return }
+        let (_, task) = Self.splitOwner(String(line[box.upperBound...]))
+        lines[index] = line[..<box.upperBound] + owner + ": " + task
+        summary = lines.joined(separator: "\n")
+    }
+
+    mutating func addParticipant(_ name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != "Me", !(participants ?? []).contains(name) else { return }
+        participants = (participants ?? []) + [name]
+    }
+
+    mutating func removeParticipant(_ name: String) {
+        participants?.removeAll { $0 == name }
+        if participants?.isEmpty == true { participants = nil }
+    }
+
+    /// Fixes a name everywhere it appears: the participant list, transcript labels and action item owners.
+    mutating func renameParticipant(_ old: String, to new: String) {
+        let new = new.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !new.isEmpty, new != old else { return }
+        var people = (participants ?? []).map { $0 == old ? new : $0 }
+        if !people.contains(new) { people.append(new) }
+        participants = people.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
+        for index in lines.indices where lines[index].name == old { lines[index].name = new }
+        for item in actionItems where item.owner == old { setOwner(atLine: item.line, to: new) }
+    }
+
     var markdown: String {
         var parts: [String] = []
         if let summary { parts.append(summary) } else { parts.append("# \(title)") }

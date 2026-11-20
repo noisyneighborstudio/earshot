@@ -21,7 +21,10 @@ struct MeetingSummarizer: Sendable {
     ## Key points
     ## Decisions
     ## Action items
-    Use "- [ ] Owner: task", where Owner is "Me", a name from the transcript, or "Unassigned".
+    Use "- [ ] Owner: task", where Owner is "Me", a participant, or "Unassigned". When a \
+    Participants list is given, use those names exactly as spelled there; match a person \
+    mentioned in the transcript to the closest listed name. Use a name that isn't listed only \
+    when the transcript clearly names someone else.
     ## Open questions
 
     Leave out any section that would be empty. Output only the notes.

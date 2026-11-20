@@ -57,6 +57,31 @@ struct Chip: View {
     }
 }
 
+/// An action item's owner chip; click to hand the item to someone else.
+struct OwnerMenu: View {
+    let owner: String?
+    let assignees: [String]
+    let participants: [String]
+    let onPick: (String) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(assignees, id: \.self) { name in
+                Button { onPick(name) } label: {
+                    if name == owner { Label(name, systemImage: "checkmark") } else { Text(verbatim: name) }
+                }
+            }
+        } label: {
+            Chip(text: owner ?? String(localized: "Assign"),
+                 color: owner.map { Theme.color(forName: $0, participants: participants) } ?? Theme.unknown, bold: true)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(Text("Change who this is assigned to"))
+    }
+}
+
 struct Keycap: View {
     let label: String
 
