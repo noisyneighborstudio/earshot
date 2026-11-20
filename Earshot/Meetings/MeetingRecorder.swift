@@ -98,7 +98,7 @@ final class MeetingRecorder {
         do {
             generation += 1
             let current = generation
-            try mic.start(format: me.format, echoCancellation: computerAudio) { [weak self] buffer, level in
+            try mic.start(format: me.format) { [weak self] buffer, level in
                 me.append(buffer)
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {

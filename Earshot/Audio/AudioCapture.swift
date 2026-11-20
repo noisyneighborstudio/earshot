@@ -13,25 +13,12 @@ enum AudioCaptureError: LocalizedError {
 final class AudioCapture {
     private let engine = AVAudioEngine()
 
-    /// `echoCancellation` removes what the speakers play, so a call heard without headphones
-    /// isn't transcribed again as the user.
-    func start(
-        format: AVAudioFormat, echoCancellation: Bool = false,
-        onBuffer: @escaping @Sendable (AVAudioPCMBuffer, Float) -> Void
-    ) throws {
+    func start(format: AVAudioFormat, onBuffer: @escaping @Sendable (AVAudioPCMBuffer, Float) -> Void) throws {
         let input = engine.inputNode
-        if echoCancellation {
-            try input.setVoiceProcessingEnabled(true)
-            // Don't turn the call down for the user.
-            input.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: false, duckingLevel: .min)
-        }
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, let converter = AVAudioConverter(from: inputFormat, to: format) else {
             throw AudioCaptureError.noInputDevice
         }
-        // Voice processing delivers several channels with the processed voice on the first; the
-        // default map would output silence.
-        converter.channelMap = [0]
 
         // The converter is only ever used from the tap's serial audio thread.
         input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, _ in
