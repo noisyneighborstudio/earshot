@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import Foundation
 import Testing
 @testable import Earshot
@@ -585,5 +586,109 @@ struct VoiceNoteTests {
         let json = #"{"id":"F7982D60-2011-4EB4-B8F4-79B5077B4385","title":"Old","platform":"","startedAt":0,"lines":[]}"#
         let meeting = try JSONDecoder().decode(Meeting.self, from: Data(json.utf8))
         #expect(meeting.kind == nil && !meeting.isNote)
+    }
+}
+
+struct AudioInputSelectionTests {
+    private let builtIn = AudioInputDevice(
+        id: 73, uid: "BuiltInMicrophoneDevice", name: "MacBook Pro Microphone",
+        transport: kAudioDeviceTransportTypeBuiltIn, isRunningSomewhere: false, isDefault: true)
+    private let studioDisplay = AudioInputDevice(
+        id: 87, uid: "StudioDisplay", name: "Studio Display Microphone",
+        transport: kAudioDeviceTransportTypeUSB, isRunningSomewhere: false, isDefault: false)
+    private let iPhone = AudioInputDevice(
+        id: 85, uid: "iPhoneMic", name: "iPhone Microphone",
+        transport: kAudioDeviceTransportTypeContinuityCaptureWired, isRunningSomewhere: false, isDefault: false)
+
+    private func running(_ device: AudioInputDevice) -> AudioInputDevice {
+        AudioInputDevice(
+            id: device.id, uid: device.uid, name: device.name,
+            transport: device.transport, isRunningSomewhere: true, isDefault: device.isDefault)
+    }
+
+    @Test func followsActiveCallMicOverSystemDefault() {
+        let picked = AudioInputs.preferred(
+            from: [iPhone, running(studioDisplay), builtIn],
+            clamshellClosed: false)
+        #expect(picked?.id == studioDisplay.id)
+    }
+
+    @Test func skipsHardwareMutedBuiltInWhenClamshellClosed() {
+        // Closed lid, Zoom on Studio Display, default still Built-In.
+        let activeCall = AudioInputs.preferred(
+            from: [iPhone, running(studioDisplay), running(builtIn)],
+            clamshellClosed: true)
+        #expect(activeCall?.id == studioDisplay.id)
+
+        // Closed lid, no call active: pick external USB mic, never wake idle iPhone Continuity mic.
+        let idle = AudioInputs.preferred(
+            from: [iPhone, studioDisplay, builtIn],
+            clamshellClosed: true)
+        #expect(idle?.id == studioDisplay.id)
+
+        // Closed lid with only Built-In + idle Continuity iPhone: don't chime the phone.
+        let onlyContinuity = AudioInputs.preferred(
+            from: [iPhone, builtIn],
+            clamshellClosed: true)
+        #expect(onlyContinuity?.id == builtIn.id)
+    }
+
+    @Test func usesDefaultWhenOpenAndNothingElseRunning() {
+        let picked = AudioInputs.preferred(
+            from: [iPhone, studioDisplay, builtIn],
+            clamshellClosed: false)
+        #expect(picked?.id == builtIn.id)
+    }
+
+    @Test func switchesMidRecordingWhenCallStartsAnotherMicWithoutOscillating() {
+        // Recording started on Built-In (now running because of Earshot), then Zoom opens Studio Display.
+        let switched = AudioInputs.preferred(
+            from: [iPhone, running(studioDisplay), running(builtIn)],
+            clamshellClosed: false,
+            currentDeviceID: builtIn.id,
+            knownRunning: [builtIn.id])
+        #expect(switched?.id == studioDisplay.id)
+
+        // Once both are known running (e.g. another app also holds Built-In), stay put — no ping-pong.
+        let stable = AudioInputs.preferred(
+            from: [iPhone, running(studioDisplay), running(builtIn)],
+            clamshellClosed: false,
+            currentDeviceID: studioDisplay.id,
+            knownRunning: [builtIn.id, studioDisplay.id])
+        #expect(stable?.id == studioDisplay.id)
+    }
+
+    @Test func switchesAwayFromSilentOrClosedLidDevice() {
+        // Lid closed mid-call while on Built-In: immediately leaves Built-In for Studio Display.
+        let lidClosed = AudioInputs.preferred(
+            from: [iPhone, studioDisplay, running(builtIn)],
+            clamshellClosed: true,
+            currentDeviceID: builtIn.id,
+            knownRunning: [builtIn.id])
+        #expect(lidClosed?.id == studioDisplay.id)
+
+        // Current mic streaming pure digital silence while another mic is already active (even if known).
+        let silentSwitch = AudioInputs.preferred(
+            from: [iPhone, running(studioDisplay), running(builtIn)],
+            clamshellClosed: false,
+            currentDeviceID: builtIn.id,
+            currentIsSilent: true,
+            knownRunning: [builtIn.id, studioDisplay.id])
+        #expect(silentSwitch?.id == studioDisplay.id)
+    }
+
+    @Test func measureDistinguishesDigitalSilenceFromSignal() throws {
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        let silent = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 128))
+        silent.frameLength = 128
+        for i in 0..<128 { silent.floatChannelData![0][i] = 0 }
+        #expect(AudioCapture.measure(silent) == (0, false))
+
+        let quiet = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 128))
+        quiet.frameLength = 128
+        for i in 0..<128 { quiet.floatChannelData![0][i] = 0.0001 }
+        let measured = AudioCapture.measure(quiet)
+        #expect(measured.hasSignal)
+        #expect(measured.level > 0)
     }
 }
