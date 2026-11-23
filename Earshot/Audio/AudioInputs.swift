@@ -12,6 +12,7 @@ struct AudioInputDevice: Identifiable, Equatable, Sendable {
     let isDefault: Bool
 
     var isBuiltIn: Bool { transport == kAudioDeviceTransportTypeBuiltIn }
+    var isAggregate: Bool { transport == kAudioDeviceTransportTypeAggregate }
     var isContinuity: Bool {
         transport == kAudioDeviceTransportTypeContinuityCaptureWired
             || transport == kAudioDeviceTransportTypeContinuityCaptureWireless
@@ -30,15 +31,24 @@ enum AudioInputs {
         return ids.compactMap { id in
             guard hasInputStreams(id),
                   (scalar(id, kAudioDevicePropertyDeviceIsAlive) as UInt32? ?? 0) != 0,
-                  (scalar(id, kAudioDevicePropertyIsHidden) as UInt32? ?? 0) == 0
+                  (scalar(id, kAudioDevicePropertyIsHidden) as UInt32? ?? 0) == 0,
+                  !hasTapList(id)
             else { return nil }
+            let name = string(id, kAudioObjectPropertyName) ?? ""
+            guard name != SystemAudioTap.deviceName else { return nil }
+            let transport: UInt32 = scalar(id, kAudioDevicePropertyTransportType) ?? 0
+            let isDefault = id == defaultID
+            // Private/internal aggregates (Earshot Call Capture, CADefaultDeviceAggregate, screen-capture
+            // taps) are still visible to their own process with isHidden == 0; never treat them as mics
+            // unless the user explicitly selected a custom Aggregate Device as macOS's default input.
+            if transport == kAudioDeviceTransportTypeAggregate && !isDefault { return nil }
             return AudioInputDevice(
                 id: id,
                 uid: string(id, kAudioDevicePropertyDeviceUID) ?? "",
-                name: string(id, kAudioObjectPropertyName) ?? "",
-                transport: scalar(id, kAudioDevicePropertyTransportType) ?? 0,
+                name: name,
+                transport: transport,
                 isRunningSomewhere: (scalar(id, kAudioDevicePropertyDeviceIsRunningSomewhere) as UInt32? ?? 0) != 0,
-                isDefault: id == defaultID
+                isDefault: isDefault
             )
         }
     }
@@ -86,10 +96,14 @@ enum AudioInputs {
         }
 
         if let currentDeviceID, let current = devices.first(where: { $0.id == currentDeviceID }) {
-            let otherActive = devices.filter { $0.isRunningSomewhere && $0.id != current.id && !isHardwareMuted($0) }
+            let otherActive = devices.filter {
+                $0.isRunningSomewhere && $0.id != current.id && !isHardwareMuted($0) && !$0.isAggregate
+            }
             if isHardwareMuted(current) {
                 if preferRunning, let picked = best(in: otherActive) { return picked }
-                if let external = devices.first(where: { !$0.isBuiltIn && !$0.isContinuity }) { return external }
+                if let external = devices.first(where: { !$0.isBuiltIn && !$0.isContinuity && !$0.isAggregate }) {
+                    return external
+                }
                 return current
             }
             if currentIsSilent, let picked = best(in: otherActive) {
@@ -103,7 +117,7 @@ enum AudioInputs {
         }
 
         if preferRunning {
-            let active = devices.filter { $0.isRunningSomewhere && !isHardwareMuted($0) }
+            let active = devices.filter { $0.isRunningSomewhere && !isHardwareMuted($0) && !$0.isAggregate }
             if let picked = best(in: active) { return picked }
         }
         let defaultDevice = devices.first(where: \.isDefault)
@@ -111,10 +125,10 @@ enum AudioInputs {
             return defaultDevice
         }
         // Never wake an idle Continuity (iPhone) mic unasked — opening it chimes the phone.
-        if let external = devices.first(where: { !$0.isBuiltIn && !$0.isContinuity }) {
+        if let external = devices.first(where: { !$0.isBuiltIn && !$0.isContinuity && !$0.isAggregate }) {
             return external
         }
-        return defaultDevice ?? devices.first { !$0.isContinuity } ?? devices.first
+        return defaultDevice ?? devices.first { !$0.isContinuity && !$0.isAggregate } ?? devices.first
     }
 
     // MARK: - Core Audio helpers
@@ -131,6 +145,16 @@ enum AudioInputs {
         var addr = address(kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeInput)
         var size: UInt32 = 0
         return AudioObjectGetPropertyDataSize(device, &addr, 0, nil, &size) == noErr && size > 0
+    }
+
+    private static func hasTapList(_ device: AudioDeviceID) -> Bool {
+        var addr = address(kAudioAggregateDevicePropertyTapList)
+        guard AudioObjectHasProperty(device, &addr) else { return false }
+        var size = UInt32(MemoryLayout<CFArray>.size)
+        var value: Unmanaged<CFArray>?
+        guard AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &value) == noErr,
+              let value else { return false }
+        return CFArrayGetCount(value.takeRetainedValue()) > 0
     }
 
     private static func scalar<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> T? {

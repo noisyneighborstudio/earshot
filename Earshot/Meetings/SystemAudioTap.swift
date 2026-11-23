@@ -16,6 +16,8 @@ enum SystemAudioTapError: LocalizedError {
 /// Captures what call apps play (the other participants) with a Core Audio process tap
 /// (macOS 14.2+). Taps the given processes, or everything except Earshot when none are given.
 final class SystemAudioTap {
+    static let deviceName = "Earshot Call Capture"
+
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var deviceID = AudioObjectID(kAudioObjectUnknown)
     private var procID: AudioDeviceIOProcID?
@@ -54,7 +56,7 @@ final class SystemAudioTap {
 
         let outputUID = try defaultOutputUID()
         let aggregate: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "Earshot Call Capture",
+            kAudioAggregateDeviceNameKey: Self.deviceName,
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
             kAudioAggregateDeviceMainSubDeviceKey: outputUID,
             kAudioAggregateDeviceIsPrivateKey: true,

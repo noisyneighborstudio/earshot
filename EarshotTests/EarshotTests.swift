@@ -677,6 +677,26 @@ struct AudioInputSelectionTests {
         #expect(silentSwitch?.id == studioDisplay.id)
     }
 
+    @Test func ignoresAggregateTapDevices() {
+        let tapAggregate = AudioInputDevice(
+            id: 148, uid: "tap-uuid", name: SystemAudioTap.deviceName,
+            transport: kAudioDeviceTransportTypeAggregate, isRunningSomewhere: true, isDefault: false)
+
+        // Never switch mid-recording to Earshot's own call-capture aggregate device.
+        let midCall = AudioInputs.preferred(
+            from: [iPhone, running(studioDisplay), builtIn, tapAggregate],
+            clamshellClosed: true,
+            currentDeviceID: studioDisplay.id,
+            knownRunning: [studioDisplay.id])
+        #expect(midCall?.id == studioDisplay.id)
+
+        // Never pick a running aggregate tap at start or as a clamshell fallback.
+        let atStart = AudioInputs.preferred(
+            from: [iPhone, builtIn, tapAggregate],
+            clamshellClosed: true)
+        #expect(atStart?.id == builtIn.id)
+    }
+
     @Test func measureDistinguishesDigitalSilenceFromSignal() throws {
         let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
         let silent = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 128))
