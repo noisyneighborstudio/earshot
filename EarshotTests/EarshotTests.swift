@@ -745,3 +745,28 @@ struct AudioInputSelectionTests {
         #expect(measured.level > 0)
     }
 }
+
+struct PillDockTests {
+    private let screen = CGRect(x: 0, y: 0, width: 1600, height: 900)
+
+    @Test func picksNearestEdgeUsingNormalizedCoordinates() {
+        #expect(PillDock.nearest(to: CGPoint(x: 800, y: 850), in: screen) == .top)
+        #expect(PillDock.nearest(to: CGPoint(x: 800, y: 50), in: screen) == .bottom)
+        #expect(PillDock.nearest(to: CGPoint(x: 100, y: 450), in: screen) == .left)
+        #expect(PillDock.nearest(to: CGPoint(x: 1500, y: 450), in: screen) == .right)
+        // Wide display: 25% from the left at vertical midpoint still docks left (0.25 < 0.5).
+        #expect(PillDock.nearest(to: CGPoint(x: 400, y: 450), in: screen) == .left)
+        #expect(PillDock.nearest(to: CGPoint(x: 1200, y: 450), in: screen) == .right)
+    }
+
+    @Test func dockedFramesStayInsideVisibleScreen() {
+        for edge in PillDock.allCases {
+            let rect = edge.frame(in: screen)
+            #expect(screen.contains(rect))
+        }
+        #expect(PillDock.top.frame(in: screen).midY > PillDock.bottom.frame(in: screen).midY)
+        #expect(PillDock.left.frame(in: screen).midX < PillDock.right.frame(in: screen).midX)
+        #expect(PillDock.top.isHorizontal && PillDock.bottom.isHorizontal)
+        #expect(!PillDock.left.isHorizontal && !PillDock.right.isHorizontal)
+    }
+}
