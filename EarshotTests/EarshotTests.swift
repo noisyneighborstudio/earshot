@@ -97,6 +97,39 @@ struct MeetingPlatformTests {
         #expect(MeetingPlatform.looksLikeCall(windowTitle: "Meet – abc-defg-hij"))
         #expect(!MeetingPlatform.looksLikeCall(windowTitle: "Inbox - Gmail"))
     }
+
+    @Test func browserCallSurvivesTabAndSpaceSwitchesWhileHoldingMic() {
+        let safariMic = AudioProcess(objectID: 1, pid: 1563, bundleID: "com.apple.WebKit.GPU", isRunningInput: true, isRunningOutput: true)
+        let safariIdle = AudioProcess(objectID: 1, pid: 1563, bundleID: "com.apple.WebKit.GPU", isRunningInput: false, isRunningOutput: true)
+
+        // Doesn't start on a non-call tab.
+        #expect(MeetingDetector.resolve(
+            holders: [safariMic], ownPID: 999, activeCall: nil,
+            windowTitles: { _ in ["Google Docs"] }) == nil)
+
+        // Starts when the call tab is active.
+        let started = MeetingDetector.resolve(
+            holders: [safariMic], ownPID: 999, activeCall: nil,
+            windowTitles: { _ in ["Meet - Seth / Basia"] })
+        #expect(started?.platform.id == "safari")
+
+        // Stays alive when the user switches to another tab or Space while Safari still holds the mic.
+        let switchedTab = MeetingDetector.resolve(
+            holders: [safariMic], ownPID: 999, activeCall: started,
+            windowTitles: { _ in ["Google Calendar"] })
+        #expect(switchedTab == started)
+
+        let otherSpace = MeetingDetector.resolve(
+            holders: [safariMic], ownPID: 999, activeCall: started,
+            windowTitles: { _ in [] })
+        #expect(otherSpace == started)
+
+        // Ends once Safari releases the microphone.
+        let ended = MeetingDetector.resolve(
+            holders: [safariIdle], ownPID: 999, activeCall: started,
+            windowTitles: { _ in ["Meet - Seth / Basia"] })
+        #expect(ended == nil)
+    }
 }
 
 struct MeetingModelTests {
