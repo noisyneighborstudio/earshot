@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import CoreAudio
+import os
 
 struct DetectedCall: Equatable, Sendable {
     let platform: MeetingPlatform
@@ -22,6 +23,7 @@ final class MeetingDetector {
     @ObservationIgnored private var seenStreak = 0
     @ObservationIgnored private var missingStreak = 0
     @ObservationIgnored private let ownPID = ProcessInfo.processInfo.processIdentifier
+    @ObservationIgnored private let log = Logger(subsystem: "studio.noisyneighbor.earshot", category: "meetings")
 
     private static let interval: Duration = .seconds(2)
     private static let startAfter = 2   // polls
@@ -69,6 +71,7 @@ final class MeetingDetector {
             seenStreak += 1
             if current == nil, seenStreak >= Self.startAfter {
                 current = found
+                log.info("call detected: \(found.platform.name, privacy: .public)")
                 onCallStarted?(found)
             }
         } else {
@@ -76,17 +79,39 @@ final class MeetingDetector {
             missingStreak += 1
             if let call = current, missingStreak >= Self.endAfter {
                 current = nil
+                log.info("call ended: \(call.platform.name, privacy: .public)")
                 onCallEnded?(call)
             }
         }
     }
 
     private func detect() -> DetectedCall? {
-        let holders = AudioProcesses.all().filter { $0.isRunningInput && $0.pid != ownPID }
-        let platforms = Set(holders.compactMap { MeetingPlatform.forBundleID($0.bundleID) })
+        Self.resolve(
+            holders: AudioProcesses.all(),
+            ownPID: ownPID,
+            activeCall: current,
+            windowTitles: { windowTitles(for: $0) }
+        )
+    }
+
+    /// Resolves whether a call is currently active given live Core Audio processes.
+    /// Once a call is detected (including a browser call), keep it alive as long as that
+    /// platform still holds the microphone—switching browser tabs, minimizing the window,
+    /// or changing Spaces hides the call tab's AX window title even though the call continues.
+    nonisolated static func resolve(
+        holders: [AudioProcess],
+        ownPID: pid_t,
+        activeCall: DetectedCall?,
+        windowTitles: (MeetingPlatform) -> [String]
+    ) -> DetectedCall? {
+        let activeHolders = holders.filter { $0.isRunningInput && $0.pid != ownPID }
+        let platforms = Set(activeHolders.compactMap { MeetingPlatform.forBundleID($0.bundleID) })
+        if let activeCall, platforms.contains(activeCall.platform) {
+            return activeCall
+        }
         // A dedicated call app wins over a browser.
         for platform in platforms.sorted(by: { !$0.isBrowser && $1.isBrowser }) {
-            let titles = windowTitles(for: platform)
+            let titles = windowTitles(platform)
             if !platform.isBrowser {
                 return DetectedCall(platform: platform, title: titles.first ?? "")
             }
