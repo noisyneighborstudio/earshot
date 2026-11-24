@@ -80,6 +80,11 @@ final class AppModel {
         let recordingPanel = RecordingPanel(model: self)
         self.recordingPanel = recordingPanel
         recorder.onStateChange = { [weak self] _ in self?.updatePanel() }
+        settings.onPillDockChange = { [weak self] dock in
+            guard let self else { return }
+            self.recordingPanel?.snap(to: dock, animated: true)
+            self.updateOverlayLift()
+        }
         detector.onCallStarted = { [weak self] call in
             guard let self else { return }
             switch settings.meetingMode {
@@ -126,6 +131,11 @@ final class AppModel {
     private func updatePanel() {
         let visible = recorder.state != .idle || callPrompt != nil
         recordingPanel?.setVisible(visible)
-        overlay.lift = visible ? RecordingPanel.height : 0
+        updateOverlayLift()
+    }
+
+    private func updateOverlayLift() {
+        let visible = recorder.state != .idle || callPrompt != nil
+        overlay.lift = visible && settings.pillDock == .bottom ? RecordingPanel.height : 0
     }
 }
