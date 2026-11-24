@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreAudio
+import os
 
 enum SystemAudioTapError: LocalizedError {
     case coreAudio(String, OSStatus)
@@ -15,24 +16,78 @@ enum SystemAudioTapError: LocalizedError {
 
 /// Captures what call apps play (the other participants) with a Core Audio process tap
 /// (macOS 14.2+). Taps the given processes, or everything except Earshot when none are given.
-final class SystemAudioTap {
+/// Tracks the aggregate device's actual nominal sample rate (e.g. 24 kHz on AirPods HFP)
+/// and rebuilds if the output device or its sample rate changes mid-call.
+final class SystemAudioTap: @unchecked Sendable {
     static let deviceName = "Earshot Call Capture"
 
+    private struct Pipeline {
+        let format: AVAudioFormat
+        let converter: AVAudioConverter
+    }
+
+    private let controlQueue = DispatchQueue(label: "studio.noisyneighbor.earshot.call-audio")
+    private let ioQueue = DispatchQueue(label: "studio.noisyneighbor.earshot.call-audio.io", qos: .userInitiated)
+    private let lock = NSLock()
+    private let log = Logger(subsystem: "studio.noisyneighbor.earshot", category: "audio")
+
+    private var pipeline: Pipeline?
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var deviceID = AudioObjectID(kAudioObjectUnknown)
     private var procID: AudioDeviceIOProcID?
-    private let queue = DispatchQueue(label: "studio.noisyneighbor.earshot.call-audio", qos: .userInitiated)
+    private var tapDescription = AudioStreamBasicDescription()
+    private var currentOutputUID: String?
+    private var sampleRateListener: AudioObjectPropertyListenerBlock?
+    private var defaultOutputListener: AudioObjectPropertyListenerBlock?
+    private var started = false
+    private var processes: [AudioObjectID] = []
+    private var targetFormat: AVAudioFormat?
+    private var onBuffer: (@Sendable (AVAudioPCMBuffer) -> Void)?
 
     func start(
         processes: [AudioObjectID], format target: AVAudioFormat,
         onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void
     ) throws {
-        do {
-            try create(processes: processes, target: target, onBuffer: onBuffer)
-        } catch {
-            stop()
-            throw error
+        try controlQueue.sync {
+            self.processes = processes
+            self.targetFormat = target
+            self.onBuffer = onBuffer
+            do {
+                try create(processes: processes, target: target, onBuffer: onBuffer)
+                installDefaultOutputListener()
+                started = true
+            } catch {
+                teardown()
+                self.targetFormat = nil
+                self.onBuffer = nil
+                throw error
+            }
         }
+    }
+
+    func stop() {
+        controlQueue.sync {
+            started = false
+            removeDefaultOutputListener()
+            teardown()
+            targetFormat = nil
+            onBuffer = nil
+            processes = []
+        }
+    }
+
+    /// Core Audio process taps report their native format (typically 48 kHz) via
+    /// `kAudioTapPropertyFormat`, while the aggregate device delivers audio at its own
+    /// `kAudioDevicePropertyNominalSampleRate` (e.g. 24 kHz on Bluetooth HFP headphones).
+    static func effectiveStreamDescription(
+        tapDescription: AudioStreamBasicDescription,
+        nominalSampleRate: Float64
+    ) -> AudioStreamBasicDescription {
+        var description = tapDescription
+        if nominalSampleRate > 0 {
+            description.mSampleRate = nominalSampleRate
+        }
+        return description
     }
 
     private func create(
@@ -50,11 +105,10 @@ final class SystemAudioTap {
         var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
         var formatAddress = Self.address(kAudioTapPropertyFormat)
         try check(AudioObjectGetPropertyData(tapID, &formatAddress, 0, nil, &size, &streamDescription), "read tap format")
-        guard let tapFormat = AVAudioFormat(streamDescription: &streamDescription),
-              let converter = AVAudioConverter(from: tapFormat, to: target)
-        else { throw SystemAudioTapError.unsupportedFormat }
+        tapDescription = streamDescription
 
         let outputUID = try defaultOutputUID()
+        currentOutputUID = outputUID
         let aggregate: [String: Any] = [
             kAudioAggregateDeviceNameKey: Self.deviceName,
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
@@ -70,17 +124,32 @@ final class SystemAudioTap {
         ]
         try check(AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &deviceID), "create aggregate device")
 
-        // The converter is only used on our serial IO queue.
-        try check(AudioDeviceCreateIOProcIDWithBlock(&procID, deviceID, queue) { _, inputData, _, _, _ in
-            guard let input = AVAudioPCMBuffer(pcmFormat: tapFormat, bufferListNoCopy: inputData, deallocator: nil),
-                  let converted = AudioCapture.convert(input, with: converter, to: target)
+        let nominalRate = nominalSampleRate(of: deviceID)
+        try installPipeline(nominalSampleRate: nominalRate, target: target)
+        installSampleRateListener(on: deviceID)
+
+        // The IO block runs serially on ioQueue and grabs the latest pipeline snapshot under lock.
+        try check(AudioDeviceCreateIOProcIDWithBlock(&procID, deviceID, ioQueue) { [weak self] _, inputData, _, _, _ in
+            guard let self, let current = self.lock.withLock({ self.pipeline }),
+                  let input = AVAudioPCMBuffer(pcmFormat: current.format, bufferListNoCopy: inputData, deallocator: nil),
+                  let converted = AudioCapture.convert(input, with: current.converter, to: target)
             else { return }
             onBuffer(converted)
         }, "create IO proc")
         try check(AudioDeviceStart(deviceID, procID), "start device")
+        log.info("call tap started: \(outputUID, privacy: .public) @ \(nominalRate, privacy: .public) Hz (tap \(streamDescription.mSampleRate, privacy: .public) Hz)")
     }
 
-    func stop() {
+    private func installPipeline(nominalSampleRate: Float64, target: AVAudioFormat) throws {
+        var effective = Self.effectiveStreamDescription(tapDescription: tapDescription, nominalSampleRate: nominalSampleRate)
+        guard let inputFormat = AVAudioFormat(streamDescription: &effective),
+              let converter = AVAudioConverter(from: inputFormat, to: target)
+        else { throw SystemAudioTapError.unsupportedFormat }
+        lock.withLock { pipeline = Pipeline(format: inputFormat, converter: converter) }
+    }
+
+    private func teardown() {
+        removeSampleRateListener()
         if deviceID != kAudioObjectUnknown {
             if let procID {
                 AudioDeviceStop(deviceID, procID)
@@ -89,9 +158,83 @@ final class SystemAudioTap {
             AudioHardwareDestroyAggregateDevice(deviceID)
         }
         if tapID != kAudioObjectUnknown { AudioHardwareDestroyProcessTap(tapID) }
+        lock.withLock { pipeline = nil }
         procID = nil
         deviceID = AudioObjectID(kAudioObjectUnknown)
         tapID = AudioObjectID(kAudioObjectUnknown)
+        currentOutputUID = nil
+    }
+
+    private func installSampleRateListener(on device: AudioObjectID) {
+        removeSampleRateListener()
+        var addr = Self.address(kAudioDevicePropertyNominalSampleRate)
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.handleSampleRateChange()
+        }
+        if AudioObjectAddPropertyListenerBlock(device, &addr, controlQueue, listener) == noErr {
+            sampleRateListener = listener
+        }
+    }
+
+    private func removeSampleRateListener() {
+        guard let listener = sampleRateListener, deviceID != kAudioObjectUnknown else { return }
+        var addr = Self.address(kAudioDevicePropertyNominalSampleRate)
+        AudioObjectRemovePropertyListenerBlock(deviceID, &addr, controlQueue, listener)
+        sampleRateListener = nil
+    }
+
+    private func installDefaultOutputListener() {
+        removeDefaultOutputListener()
+        var addr = Self.address(kAudioHardwarePropertyDefaultOutputDevice)
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.handleDefaultOutputChange()
+        }
+        if AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &addr, controlQueue, listener
+        ) == noErr {
+            defaultOutputListener = listener
+        }
+    }
+
+    private func removeDefaultOutputListener() {
+        guard let listener = defaultOutputListener else { return }
+        var addr = Self.address(kAudioHardwarePropertyDefaultOutputDevice)
+        AudioObjectRemovePropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &addr, controlQueue, listener)
+        defaultOutputListener = nil
+    }
+
+    private func handleSampleRateChange() {
+        guard started, deviceID != kAudioObjectUnknown, let targetFormat else { return }
+        let rate = nominalSampleRate(of: deviceID)
+        guard rate > 0 else { return }
+        do {
+            try installPipeline(nominalSampleRate: rate, target: targetFormat)
+            log.info("call tap sample rate changed to \(rate, privacy: .public) Hz")
+        } catch {
+            log.error("call tap sample rate update failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func handleDefaultOutputChange() {
+        guard started, let targetFormat, let onBuffer else { return }
+        let nextUID = try? defaultOutputUID()
+        guard let nextUID, nextUID != currentOutputUID else { return }
+        log.info("default output changed to \(nextUID, privacy: .public); restarting call tap")
+        teardown()
+        do {
+            try create(processes: processes, target: targetFormat, onBuffer: onBuffer)
+        } catch {
+            log.error("call tap restart failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func nominalSampleRate(of device: AudioObjectID) -> Float64 {
+        var rate: Float64 = 0
+        var size = UInt32(MemoryLayout<Float64>.size)
+        var addr = Self.address(kAudioDevicePropertyNominalSampleRate)
+        guard AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &rate) == noErr else { return 0 }
+        return rate
     }
 
     private func ownProcessObject() -> AudioObjectID? {
@@ -105,11 +248,14 @@ final class SystemAudioTap {
     }
 
     private func defaultOutputUID() throws -> String {
+        let system = AudioObjectID(kAudioObjectSystemObject)
         var device = AudioObjectID(kAudioObjectUnknown)
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
-        var addr = Self.address(kAudioHardwarePropertyDefaultSystemOutputDevice)
-        try check(AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &device),
-                  "find output device")
+        var addr = Self.address(kAudioHardwarePropertyDefaultOutputDevice)
+        if AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &device) != noErr || device == kAudioObjectUnknown {
+            addr = Self.address(kAudioHardwarePropertyDefaultSystemOutputDevice)
+            try check(AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &device), "find output device")
+        }
         var uid: Unmanaged<CFString>?
         size = UInt32(MemoryLayout<CFString>.size)
         addr = Self.address(kAudioDevicePropertyDeviceUID)

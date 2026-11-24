@@ -744,4 +744,38 @@ struct AudioInputSelectionTests {
         #expect(measured.hasSignal)
         #expect(measured.level > 0)
     }
+
+    @Test func systemAudioTapUsesAggregateNominalSampleRate() throws {
+        // AirPods Pro in Bluetooth HFP run at 24 kHz while kAudioTapPropertyFormat still reports 48 kHz.
+        let tapFormat = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 2, interleaved: true))
+        var effectiveASBD = SystemAudioTap.effectiveStreamDescription(
+            tapDescription: tapFormat.streamDescription.pointee,
+            nominalSampleRate: 24_000)
+        #expect(effectiveASBD.mSampleRate == 24_000)
+        #expect(effectiveASBD.mChannelsPerFrame == 2)
+
+        // Zero/unavailable nominal rate preserves the tap's original sample rate.
+        let fallback = SystemAudioTap.effectiveStreamDescription(
+            tapDescription: tapFormat.streamDescription.pointee,
+            nominalSampleRate: 0)
+        #expect(fallback.mSampleRate == 48_000)
+
+        // 20 ms at 24 kHz (480 frames) must convert to ~20 ms at 16 kHz (320 frames), not 10 ms (160 frames).
+        let inputFormat = try #require(AVAudioFormat(streamDescription: &effectiveASBD))
+        let targetFormat = try #require(AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true))
+        let converter = try #require(AVAudioConverter(from: inputFormat, to: targetFormat))
+        let input = try #require(AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: 480))
+        input.frameLength = 480
+        let samples = input.mutableAudioBufferList.pointee.mBuffers.mData!.assumingMemoryBound(to: Float.self)
+        for i in 0..<480 {
+            let value = sinf(2 * .pi * 440 * Float(i) / 24_000) * 0.5
+            samples[i * 2] = value
+            samples[i * 2 + 1] = value
+        }
+        let converted = try #require(AudioCapture.convert(input, with: converter, to: targetFormat))
+        #expect(converted.frameLength >= 300 && converted.frameLength <= 325)
+        let outSamples = try #require(converted.int16ChannelData?[0])
+        let peak = (0..<Int(converted.frameLength)).map { abs(Int(outSamples[$0])) }.max() ?? 0
+        #expect(peak > 1000)
+    }
 }
